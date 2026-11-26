@@ -78,6 +78,8 @@ export interface AppConfig {
   candidate_mic_compatibility_mode?: boolean
   position: string
   language: string
+  /** tech=技术岗（默认）；general=非技术岗（管培生/运营/销售等，行为面风格） */
+  interview_mode?: 'tech' | 'general'
   auto_detect: boolean
   silence_threshold: number
   silence_duration: number

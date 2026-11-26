@@ -613,6 +613,13 @@ def classify_asr_question_candidate(
     )
     has_directive_cue = bool(_DIRECTIVE_QUESTION_CUE.search(normalized))
     has_tail_question = bool(re.search(r"(?:吗|么|呢)$", normalized))
+    # 「…的吧 / …对吧 / …是吧」也常是出题句（如"你知道我们这个岗位是需要轮岗的吧"）。
+    # 单独要求句子里出现「你/您」且长度足够，避免"我们开始吧"这类非提问被误触发。
+    has_soft_tail_question = bool(
+        re.search(r"(?:吧|是吧|对吧)$", normalized)
+        and re.search(r"[你您]", normalized)
+        and sig >= max(6, need)
+    )
     incomplete_tail = bool(_INCOMPLETE_TAIL.search(normalized))
     low_value_fragment = bool(_LOW_VALUE_FRAGMENT.fullmatch(normalized))
     constraint_tail = bool(_QUESTION_CONSTRAINT_TAIL.search(normalized))
@@ -625,6 +632,8 @@ def classify_asr_question_candidate(
     if has_question_cue or has_directive_cue:
         return "promote", normalized
     if has_tail_question and sig >= max(3, need - 1):
+        return "promote", normalized
+    if has_soft_tail_question:
         return "promote", normalized
     if incomplete_tail:
         if sig >= need:

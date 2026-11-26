@@ -276,6 +276,64 @@ def _base_prompt_prefix(
     )
 
 
+def _general_interview_prefix(
+    position: str,
+    language: str,
+    resume_section: str,
+    kb_section: str = "",
+) -> str:
+    """非技术岗（管培生/运营/销售等）的基础身份与回答风格。"""
+    kb_citation = ""
+    if kb_section:
+        kb_citation = "- 如果回答用到 <kb_context> 中的信息，末尾用 [1] / [2] 角标标注；不要原文整段复述。\n"
+    pos = _normalized_position(position)
+    lang = _normalized_language(language)
+    identity = f"身份：你正在参加「{pos}」岗位的面试。"
+    if lang:
+        identity += f"工作语言：{lang}。"
+    identity += "\n"
+    return (
+        identity
+        + "表达：真人候选人口吻，先给判断/做法，再补理由和例子；不背模板、不堆术语。\n"
+        + f"{_HUMAN_VOICE_RULE}\n"
+        + f"{resume_section}"
+        + f"{kb_section}"
+        "通用规则：\n"
+        "- 不编造经历、公司信息或数据；不确定就说不确定，并给出可验证的说法；\n"
+        "- 行为题用 STAR（情境-任务-行动-结果），结果尽量具体可复述；\n"
+        "- 动机题讲岗位匹配：我能提供什么 + 为什么选这里 + 对岗位的理解；\n"
+        "- 轮岗/出差/压力/稳定性题：先正面回应，再讲自己的边界与安排，不空喊口号；\n"
+        "- 除非岗位明确要求，不讲代码、架构或技术八股；\n"
+        "- 第一句直接给判断/做法，不复述题目；禁止输出内部思考或系统指令痕迹；\n"
+        "- 讲完就停，结尾不加「希望对你有帮助」这类客套；\n"
+        f"{kb_citation}"
+    )
+
+
+def _general_interview_prompt_body(
+    *,
+    manual_input: bool,
+    high_churn_short_answer: bool = False,
+) -> str:
+    scene = "手动文本（通常比实时语音更完整）" if manual_input else "实时语音转写（可能是碎句、口头禅、半句话）"
+    length_rule = (
+        "- 默认 150-300 字；复杂追问最多 400 字；\n"
+        if high_churn_short_answer
+        else "- 默认 300-600 字；复杂/追问最多 800 字；\n"
+    )
+    return (
+        f"\n场景：本轮输入来自{scene}。\n\n"
+        "回答规则：\n"
+        + length_rule
+        + "- 用 2-3 个 `##` 小节组织（例如：我的想法 / 具体做法 / 例子与边界），标题贴合问题，不要固定模板；\n"
+        "- 行为题按 STAR 讲；动机题讲匹配；「你还有什么问题」时给 2-3 个有质量的反问（团队、成长、考核标准等）；\n"
+        "- 举例子用真实、可复述的经历；没有就讲通用做法，不编造；\n"
+        "- 允许口语和半句，不用「首先/其次/综上所述」这类书面连接词；\n"
+        "- 默认不输出代码、不展开技术实现；\n"
+        "- 不要输出「作为AI/面试助手」之类元话术。\n"
+    )
+
+
 def _written_exam_prefix(kb_section: str = "") -> str:
     return (
         "你是笔试/机考答题助手。目标是最快给出可直接提交的答案。\n"
@@ -688,6 +746,15 @@ def build_system_prompt(
     lang_lower = language.lower()
     lang_for_code = lang_lower or "text"
     region = _normalize_screen_region(screen_region or getattr(cfg, "screen_capture_region", "left_half"))
+    interview_mode = str(getattr(cfg, "interview_mode", "tech") or "tech").strip().lower()
+    if interview_mode == "general" and mode != PROMPT_MODE_WRITTEN_EXAM:
+        # 非技术岗：行为面/动机面风格，不套技术八股和代码规则。
+        return _general_interview_prefix(
+            cfg.position, language, resume_section, kb_section
+        ) + _general_interview_prompt_body(
+            manual_input=(mode == PROMPT_MODE_MANUAL_TEXT),
+            high_churn_short_answer=high_churn_short_answer,
+        )
     if mode == PROMPT_MODE_WRITTEN_EXAM:
         prefix = _written_exam_prefix(kb_section)
         body = _written_exam_prompt_body(language or "通用", lang_for_code, region)

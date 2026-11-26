@@ -74,6 +74,7 @@ class ConfigUpdate(BaseModel):
     doubao_stt_boosting_table_id: Optional[str] = None
     position: Optional[str] = None
     language: Optional[str] = None
+    interview_mode: Optional[str] = None
     auto_detect: Optional[bool] = None
     silence_threshold: Optional[float] = None
     silence_duration: Optional[float] = None
@@ -448,6 +449,11 @@ async def api_update_config(body: ConfigUpdate):
             d["position"] = str(d["position"] or "").strip()[:60]
         if "language" in d:
             d["language"] = str(d["language"] or "").strip()[:60]
+        if "interview_mode" in d:
+            mode = str(d["interview_mode"] or "").strip().lower()
+            if mode not in ("tech", "general"):
+                raise HTTPException(422, "interview_mode 必须是 tech 或 general 之一")
+            d["interview_mode"] = mode
         if "kb_top_k" in d:
             d["kb_top_k"] = max(1, min(20, int(d["kb_top_k"])))
         if "kb_deadline_ms" in d:

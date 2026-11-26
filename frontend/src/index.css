@@ -1185,20 +1185,47 @@ code, pre, .font-mono {
 
 .ov-grip {
   position: absolute;
-  top: 6px;
+  top: 0;
   left: 50%;
+  transform: translateX(-50%);
+  /* 可视横条只有 3px，但命中区域放大到 72x18，方便鼠标拖动悬浮窗 */
+  width: 72px;
+  height: 18px;
+  border-radius: 9px;
+  background: transparent;
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  cursor: move;
+  z-index: 20;
+}
+.ov-grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 7px;
   transform: translateX(-50%);
   width: 32px;
   height: 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  opacity: 0;
-  transition: opacity 200ms ease;
-  pointer-events: none;
-  z-index: 10;
+  background: rgba(255, 255, 255, 0.35);
 }
 .ov-shell:hover .ov-grip {
   opacity: 1;
+}
+
+/* 专注面板：顶部工具栏整条可拖动（按钮保持可点击） */
+.ov-focus-toolbar {
+  -webkit-app-region: drag;
+  cursor: move;
+}
+.ov-focus-toolbar button,
+.ov-focus-toolbar a,
+.ov-focus-toolbar input,
+.ov-focus-toolbar select,
+.ov-focus-toolbar [role='button'] {
+  -webkit-app-region: no-drag;
 }
 
 .ov-answer {

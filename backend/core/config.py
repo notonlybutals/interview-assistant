@@ -166,6 +166,9 @@ class AppConfig(BaseModel):
 
     position: str = "后端开发"
     language: str = "Python"
+    # 面试岗位类型：tech=技术岗（默认，本工具主要场景）；general=非技术岗（管培生/运营/销售等）。
+    # general 时 prompt 换成行为面/动机面风格，不出技术八股和代码。
+    interview_mode: str = "tech"
     resume_text: Optional[str] = None
     # 当前生效的简历对应的历史记录 id（写入 config.json；简历正文仍不入库）
     resume_active_history_id: Optional[int] = None
@@ -321,6 +324,11 @@ class AppConfig(BaseModel):
                 )
                 self.candidate_whisper_language = ""
         self.stt_infer_threads = max(0, min(64, int(self.stt_infer_threads or 0)))
+        interview_mode = str(getattr(self, "interview_mode", "tech") or "").strip().lower()
+        if interview_mode not in ("tech", "general"):
+            logger.warning("interview_mode=%r 不支持，已重置为 tech", interview_mode)
+            interview_mode = "tech"
+        self.interview_mode = interview_mode
         fbp = (self.stt_fallback_provider or "").strip().lower()
         if fbp not in STT_FALLBACK_PROVIDER_OPTIONS:
             logger.warning("stt_fallback_provider=%r 不支持，已重置为 whisper", fbp)

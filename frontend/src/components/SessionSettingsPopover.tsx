@@ -194,6 +194,45 @@ export default function SessionSettingsPopover({
           </div>
         </section>
 
+        {/* ── 岗位类型 ── */}
+        <section>
+          <label className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-text-muted uppercase mb-1.5">
+            <Briefcase className="w-3 h-3" />
+            岗位类型
+          </label>
+          <div className="grid grid-cols-2 gap-1.5">
+            {(
+              [
+                ['tech', '技术岗'],
+                ['general', '非技术岗（行为面）'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = (config?.interview_mode ?? 'tech') === value
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    if (active) return
+                    void updateConfigAndRefresh({ interview_mode: value })
+                  }}
+                  className={`text-xs rounded-lg px-2.5 py-2 border transition-colors ${
+                    active
+                      ? 'border-accent-blue text-accent-blue bg-accent-blue/10'
+                      : 'border-bg-hover/50 text-text-secondary hover:bg-bg-tertiary/50'
+                  }`}
+                >
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-1 text-[10px] text-text-muted">
+            非技术岗会切换为行为面/动机面风格：不讲代码和技术八股，按 STAR 组织回答。
+          </p>
+        </section>
+
         {/* ── 岗位 ── */}
         <section>
           <label className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-text-muted uppercase mb-1.5">

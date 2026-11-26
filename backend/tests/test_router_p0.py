@@ -409,6 +409,30 @@ def test_update_config_truncates_overlong_position_and_language(monkeypatch):
     assert len(captured["d"]["language"]) == 60
 
 
+def test_update_config_accepts_interview_mode(monkeypatch):
+    """岗位类型 tech/general 可保存；非法值明确 422。"""
+
+    _stub_config_response(monkeypatch)
+
+    captured: dict[str, dict] = {}
+
+    def fake_update_config(d):
+        captured["d"] = dict(d)
+
+    async def fake_run_in_threadpool(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(common_router, "update_config", fake_update_config)
+    monkeypatch.setattr(common_router, "run_in_threadpool", fake_run_in_threadpool)
+
+    _run(common_router.api_update_config(_Body(interview_mode=" GENERAL ")))
+    assert captured["d"]["interview_mode"] == "general"
+
+    with pytest.raises(HTTPException) as exc:
+        _run(common_router.api_update_config(_Body(interview_mode="unknown")))
+    assert exc.value.status_code == 422
+
+
 def test_update_config_treats_empty_enum_as_reset(monkeypatch):
     """空字符串视为「重置」, 应被 pop 掉 (而非 422), 让默认值生效。"""
 

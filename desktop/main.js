@@ -121,9 +121,9 @@ let lastOverlayState = {
   maxLines: 0,
 };
 
-// 窗口偏好（任务栏显示 / 屏幕共享隐身）：默认保持隐身，但允许用户在托盘菜单里改，
-// 并持久化到 userData，下次启动沿用。
-let windowPrefs = { showInTaskbar: false, contentProtection: true };
+// 窗口偏好（任务栏显示 / 屏幕共享隐身）：默认在任务栏显示，用户随时能找回窗口；
+// 需要隐身时可在托盘菜单关闭。持久化到 userData，下次启动沿用。
+let windowPrefs = { showInTaskbar: true, contentProtection: true };
 let trayHintShown = false;
 
 function getWindowPrefsFilePath() {
@@ -365,12 +365,25 @@ function schedulePersistOverlayPosition(force = false) {
 }
 
 function createTrayIcon() {
+  // 兜底托盘图标：画一个可见的橙色圆点。旧实现返回全透明图像，
+  // 一旦 icon.png 加载失败，托盘里就完全看不到图标（用户实测过）。
   const size = 16;
-  const canvas = nativeImage.createFromBuffer(
-    Buffer.alloc(size * size * 4, 0),
-    { width: size, height: size }
-  );
-  return canvas;
+  const buf = Buffer.alloc(size * size * 4, 0);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const radius = size / 2 - 1;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dist = Math.hypot(x - cx, y - cy);
+      if (dist > radius) continue;
+      const i = (y * size + x) * 4;
+      buf[i] = 0x28; // B
+      buf[i + 1] = 0x8c; // G
+      buf[i + 2] = 0xf0; // R
+      buf[i + 3] = 255; // A
+    }
+  }
+  return nativeImage.createFromBuffer(buf, { width: size, height: size });
 }
 
 function waitForServer(timeout = 40000) {
@@ -777,58 +790,73 @@ async function addMultiServerScreenShot() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'icon.png');
-  let icon;
   try {
-    icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
-  } catch {
-    icon = createTrayIcon();
-  }
+    let icon = null;
+    const icoPath = path.join(__dirname, 'build', 'icon.ico');
+    const pngPath = path.join(__dirname, 'icon.png');
+    if (process.platform === 'win32' && fs.existsSync(icoPath)) {
+      icon = nativeImage.createFromPath(icoPath);
+    }
+    if (!icon || icon.isEmpty()) {
+      icon = nativeImage.createFromPath(pngPath);
+      if (icon && !icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 });
+    }
+    if (!icon || icon.isEmpty()) {
+      console.warn('createTray: icon assets empty, using generated icon');
+      icon = createTrayIcon();
+    }
 
-  tray = new Tray(icon);
-  tray.setToolTip(APP_DISPLAY_NAME);
+    tray = new Tray(icon);
+    tray.setToolTip(APP_DISPLAY_NAME);
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: '显示窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
-    { label: '隐藏到托盘', click: () => toggleWindow() },
-    { type: 'separator' },
-    {
-      label: '显示/隐藏悬浮窗（Ctrl+O）',
-      click: () => shortcutCallbacks.toggleInterviewOverlay(),
-    },
-    {
-      label: '悬浮窗移到鼠标位置（Ctrl+M）',
-      click: () => shortcutCallbacks.moveOverlayToMouse(),
-    },
-    { type: 'separator' },
-    {
-      label: '在任务栏显示',
-      type: 'checkbox',
-      checked: Boolean(windowPrefs.showInTaskbar),
-      click: (menuItem) => applyShowInTaskbar(menuItem.checked),
-    },
-    {
-      label: '窗口置顶',
-      type: 'checkbox',
-      checked: false,
-      click: (menuItem) => {
-        mainWindow?.setAlwaysOnTop(menuItem.checked, 'floating');
+    const contextMenu = Menu.buildFromTemplate([
+      { label: '显示窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+      { label: '隐藏到托盘', click: () => toggleWindow() },
+      { type: 'separator' },
+      {
+        label: '显示/隐藏悬浮窗（Ctrl+O）',
+        click: () => shortcutCallbacks.toggleInterviewOverlay(),
       },
-    },
-    {
-      label: '屏幕共享隐身（关闭后可截图）',
-      type: 'checkbox',
-      checked: Boolean(windowPrefs.contentProtection),
-      click: (menuItem) => applyContentProtection(menuItem.checked),
-    },
-    { type: 'separator' },
-    { label: '退出', click: () => { isQuitting = true; app.quit(); } },
-  ]);
+      {
+        label: '悬浮窗移到鼠标位置（Ctrl+M）',
+        click: () => shortcutCallbacks.moveOverlayToMouse(),
+      },
+      { type: 'separator' },
+      {
+        label: '在任务栏显示',
+        type: 'checkbox',
+        checked: Boolean(windowPrefs.showInTaskbar),
+        click: (menuItem) => applyShowInTaskbar(menuItem.checked),
+      },
+      {
+        label: '窗口置顶',
+        type: 'checkbox',
+        checked: false,
+        click: (menuItem) => {
+          mainWindow?.setAlwaysOnTop(menuItem.checked, 'floating');
+        },
+      },
+      {
+        label: '屏幕共享隐身（关闭后可截图）',
+        type: 'checkbox',
+        checked: Boolean(windowPrefs.contentProtection),
+        click: (menuItem) => applyContentProtection(menuItem.checked),
+      },
+      { type: 'separator' },
+      { label: '退出', click: () => { isQuitting = true; app.quit(); } },
+    ]);
 
-  tray.setContextMenu(contextMenu);
-  tray.on('click', () => { mainWindow?.show(); mainWindow?.focus(); });
-  // Windows 双击托盘图标也能显示
-  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
+    tray.setContextMenu(contextMenu);
+    tray.on('click', () => { mainWindow?.show(); mainWindow?.focus(); });
+    // Windows 双击托盘图标也能显示
+    tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
+  } catch (error) {
+    // 托盘创建失败时退回任务栏显示，保证用户永远找得到窗口。
+    console.warn('createTray failed, fall back to taskbar:', error?.message || error);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setSkipTaskbar(false);
+    }
+  }
 }
 
 function isFocusOverlayActive() {
@@ -953,6 +981,16 @@ function registerShortcutSet(nextShortcuts) {
 
 const shortcutCallbacks = {
   hideOrShowWindow: () => toggleWindow(),
+  toggleContentProtection: () => {
+    const next = !windowPrefs.contentProtection;
+    applyContentProtection(next);
+    notifyDesktopToast(
+      next
+        ? '已恢复屏幕共享隐身（窗口不可截图）'
+        : '已关闭屏幕共享隐身，现在可以截图了',
+      'info',
+    );
+  },
   hardClearSession: async () => {
     try {
       await postBackend('/api/clear');

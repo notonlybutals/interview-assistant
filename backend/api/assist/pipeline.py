@@ -689,6 +689,35 @@ def _should_interrupt_stale_asr(cfg=None) -> bool:
     return bool(asr_interrupt_running(cfg) and scheduler_max_parallel_slots(cfg, get_model_health) <= 1)
 
 
+_dispatch_timer_lock = threading.Lock()
+_dispatch_timer_pending = False
+
+
+def _schedule_dispatch(delay_sec: float) -> None:
+    """安排一次延后派发（去重：同一时间只保留一个定时器）。
+
+    历史问题：提交时只靠一个 `threading.Timer(delay)` 触发派发；如果定时器
+    提前触发（或异常退出），带 `dispatch_after` 的答题任务会永远留在 pending 里
+    ——实测出现过「7 句话只答了 4 句」：日志里 ASR_QUESTION 有、ANSWER_START 没有，
+    停止面试时还报 ANSWER_STOP_WAIT_TIMEOUT。这里在派发失败时补一次重试定时器。
+    """
+    global _dispatch_timer_pending
+    with _dispatch_timer_lock:
+        if _dispatch_timer_pending:
+            return
+        _dispatch_timer_pending = True
+
+    def _fire() -> None:
+        global _dispatch_timer_pending
+        with _dispatch_timer_lock:
+            _dispatch_timer_pending = False
+        _try_dispatch()
+
+    timer = threading.Timer(max(0.02, float(delay_sec)), _fire)
+    timer.daemon = True
+    timer.start()
+
+
 def submit_answer_task(task: TaskPayload) -> bool:
     global _next_submit_seq
     if pick_model_index(task, set()) is None:
@@ -705,11 +734,10 @@ def submit_answer_task(task: TaskPayload) -> bool:
         tv = _task_session_version
         _pending.append((task, seq, tv))
         delay = max(0.0, float(_task_meta(task).get("dispatch_after_mono", 0.0) or 0.0) - time.monotonic())
-    _try_dispatch()
     if delay > 0:
-        timer = threading.Timer(delay, _try_dispatch)
-        timer.daemon = True
-        timer.start()
+        # +30ms 缓冲：避免 Timer 略微提前触发时被 dispatch_after 判断跳过，之后无人重试。
+        _schedule_dispatch(delay + 0.03)
+    _try_dispatch()
     return True
 
 
@@ -812,6 +840,7 @@ def _try_dispatch():
                 avoid_models=avoid_models,
             )
 
+        dispatch_now_mono = time.monotonic()
         with _dispatch_lock:
             step = claim_next_dispatch(
                 _pending,
@@ -820,7 +849,7 @@ def _try_dispatch():
                 scheduler_max_parallel_slots(cfg, get_model_health),
                 _pick_from_snapshot,
                 interrupt_stale_asr=_should_interrupt_stale_asr(cfg),
-                now_mono=time.monotonic(),
+                now_mono=dispatch_now_mono,
             )
             model_cfg_snapshot = None
             config_snapshot = None
@@ -838,6 +867,21 @@ def _try_dispatch():
             _mark_seq_skipped(step.skipped_seq)
             continue
         if step.claim is None:
+            if _pending:
+                _ilog.debug(
+                    "DISPATCH_DEFERRED pending=%d in_flight=%d",
+                    len(_pending),
+                    len(_in_flight_tasks),
+                )
+                now_mono = dispatch_now_mono
+                waits = [
+                    float(_task_meta(pending_task).get("dispatch_after_mono", 0.0) or 0.0) - now_mono
+                    for pending_task, _seq, _ver in _pending
+                ]
+                future = [wait for wait in waits if wait > 0]
+                if future:
+                    # 定时器提前触发 / 丢失时的兜底：按最早到期的任务补一次重试。
+                    _schedule_dispatch(min(future) + 0.05)
             return
         threading.Thread(
             target=_run_answer_worker,

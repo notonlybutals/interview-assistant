@@ -20,6 +20,7 @@ def _cfg(**overrides):
         resume_text=None,
         screen_capture_region="left_half",
         kb_prompt_excerpt_chars=300,
+        interview_mode="tech",
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -64,3 +65,60 @@ def test_manual_and_screen_modes_handle_custom_profile(monkeypatch):
         prompt = _prompt(monkeypatch, _cfg(position="管培生", language="无"), mode=mode)
         assert "管培生" in prompt
         assert "日常主要使用" not in prompt
+
+
+def test_general_interview_mode_uses_behavioral_style(monkeypatch):
+    prompt = _prompt(
+        monkeypatch,
+        _cfg(interview_mode="general", position="酒店管培生", language="无"),
+    )
+
+    assert "「酒店管培生」岗位" in prompt
+    assert "STAR" in prompt
+    # 非技术岗不应该再出现技术八股/代码规则
+    assert "代码规则" not in prompt
+    assert "技术面试" not in prompt
+    assert "日常主要使用" not in prompt
+
+
+def test_general_interview_mode_works_for_manual_text(monkeypatch):
+    prompt = _prompt(
+        monkeypatch,
+        _cfg(interview_mode="general", position="运营专员", language="无"),
+        mode="manual_text",
+    )
+    assert "运营专员" in prompt
+    assert "手动文本" in prompt
+    assert "STAR" in prompt
+
+
+def test_soft_tail_ba_counts_as_question_when_second_person_present():
+    from services.stt import text_utils
+
+    # "你知道我们这个岗位是需要轮岗的吧"：真实面试里会被漏判（历史日志中 7 问只答 4）
+    kind, _ = text_utils.classify_asr_question_candidate(
+        "你知道我们这个岗位是需要轮岗的吧", 2
+    )
+    assert kind == "promote"
+
+
+def test_soft_tail_ba_does_not_promote_non_question_statement():
+    from services.stt import text_utils
+
+    kind, _ = text_utils.classify_asr_question_candidate("那我们开始吧", 2)
+    assert kind != "promote"
+
+
+def test_tech_mode_keeps_code_rules(monkeypatch):
+    prompt = _prompt(monkeypatch, _cfg(interview_mode="tech", language="Java"))
+    assert "代码规则" in prompt
+    assert "非技术岗" not in prompt
+
+
+def test_config_interview_mode_defaults_and_validation():
+    from core.config import AppConfig
+
+    assert AppConfig().interview_mode == "tech"
+    assert AppConfig(interview_mode="GENERAL").interview_mode == "general"
+    assert AppConfig(interview_mode="weird").interview_mode == "tech"
+
