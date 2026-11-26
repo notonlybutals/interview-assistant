@@ -1196,9 +1196,12 @@ code, pre, .font-mono {
   opacity: 0;
   transition: opacity 200ms ease;
   pointer-events: auto;
-  -webkit-app-region: drag;
-  cursor: move;
+  cursor: grab;
+  touch-action: none;
   z-index: 20;
+}
+.ov-grip:active {
+  cursor: grabbing;
 }
 .ov-grip::after {
   content: '';
@@ -1213,6 +1216,33 @@ code, pre, .font-mono {
 }
 .ov-shell:hover .ov-grip {
   opacity: 1;
+}
+
+/* 右下角拖拽缩放把手（仅在「悬浮窗允许鼠标调整」开启时渲染） */
+.ov-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 20px;
+  height: 20px;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 21;
+}
+.ov-resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid rgba(255, 255, 255, 0.35);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.35);
+  border-bottom-right-radius: 3px;
+}
+.ov-shell:hover .ov-resize-handle::after {
+  border-color: rgba(255, 255, 255, 0.7);
 }
 
 /* 专注面板：顶部工具栏整条可拖动（按钮保持可点击） */

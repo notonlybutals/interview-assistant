@@ -115,6 +115,15 @@ def test_tech_mode_keeps_code_rules(monkeypatch):
     assert "非技术岗" not in prompt
 
 
+def test_relaxed_question_detection_accepts_long_statement():
+    from services.stt import text_utils
+
+    statement = ["我们这个岗位需要在不同门店轮岗"]
+    # 严格模式保持旧行为（陈述句不触发），放宽模式宁多答不漏答。
+    assert text_utils.is_viable_asr_question_group(statement, 2) is False
+    assert text_utils.is_viable_asr_question_group(statement, 2, relaxed=True) is True
+
+
 def test_config_interview_mode_defaults_and_validation():
     from core.config import AppConfig
 

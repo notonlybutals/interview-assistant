@@ -68,6 +68,7 @@ class AssistAsrStateMachine:
         if not is_viable_asr_question_group(
             group.utterances,
             getattr(cfg, "transcription_min_sig_chars", 2),
+            relaxed=bool(getattr(cfg, "assist_asr_question_relaxed", True)),
         ):
             return
         question_text = build_asr_question_group_text(group.utterances)

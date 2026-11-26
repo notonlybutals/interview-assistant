@@ -120,6 +120,49 @@ export default function PreferencesTab({ variant = 'main' }: { variant?: 'main' 
   const [kbAsrDeadlineMs, setKbAsrDeadlineMs] = useState(80)
   const autoSave = useAutoSaveSetting<Record<string, unknown>>(updateConfigAndRefresh)
 
+  const [windowPrefs, setWindowPrefs] = useState<{
+    showInTaskbar: boolean
+    contentProtection: boolean
+    overlayInteractive: boolean
+  } | null>(null)
+
+  useEffect(() => {
+    const api = window.electronAPI
+    if (!api?.getWindowPrefs) return
+    let alive = true
+    api
+      .getWindowPrefs()
+      .then((prefs) => {
+        if (!alive || !prefs) return
+        setWindowPrefs({
+          showInTaskbar: prefs.showInTaskbar !== false,
+          contentProtection: prefs.contentProtection !== false,
+          overlayInteractive: prefs.overlayInteractive !== false,
+        })
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const updateWindowPrefs = async (patch: Record<string, unknown>) => {
+    const api = window.electronAPI
+    if (!api?.setWindowPrefs) return
+    try {
+      const next = await api.setWindowPrefs(patch)
+      if (next) {
+        setWindowPrefs({
+          showInTaskbar: next.showInTaskbar !== false,
+          contentProtection: next.contentProtection !== false,
+          overlayInteractive: next.overlayInteractive !== false,
+        })
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   useEffect(() => {
     if (config?.answer_autoscroll_bottom_px != null) {
       setScrollBottomPx(config.answer_autoscroll_bottom_px)
@@ -272,6 +315,62 @@ export default function PreferencesTab({ variant = 'main' }: { variant?: 'main' 
             当前：{config?.assist_high_churn_short_answer ? '简短回答' : '详细回答'}
           </p>
         </Field>
+        <Field label="生成时滚动" hint="默认固定在答案开头，按阅读顺序看；需要跟最新内容时可切到跟随">
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { value: false, label: '固定在开头', hint: '生成时不滚动' },
+              { value: true, label: '跟随最新', hint: '自动滚到底部' },
+            ]).map((item) => {
+              const selected = (config?.answer_autoscroll_follow ?? false) === item.value
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={async () => {
+                    await autoSave.saveNow({ answer_autoscroll_follow: item.value })
+                  }}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
+                    selected
+                      ? 'border-accent-blue bg-accent-blue/10 ring-1 ring-accent-blue/30'
+                      : 'border-bg-hover bg-bg-tertiary/25 hover:border-bg-hover'
+                  }`}
+                >
+                  <span className={`text-xs font-semibold ${selected ? 'text-accent-blue' : 'text-text-primary'}`}>
+                    {item.label}
+                  </span>
+                  <span className="block text-[10px] text-text-muted mt-1">{item.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+        </Field>
+      </Section>
+
+      <Section title="窗口与截图" icon={<Monitor className="w-3.5 h-3.5" />} keywords="任务栏 托盘 截图 隐身 悬浮窗 拖动 缩放 window taskbar screenshot overlay resize">
+        {windowPrefs ? (
+          <div className="space-y-2.5">
+            <Toggle
+              checked={windowPrefs.showInTaskbar}
+              onChange={(value) => { void updateWindowPrefs({ showInTaskbar: value }) }}
+              label="在任务栏显示主窗口（关闭后只在托盘；最小化会隐藏）"
+            />
+            <Toggle
+              checked={!windowPrefs.contentProtection}
+              onChange={(value) => { void updateWindowPrefs({ contentProtection: !value }) }}
+              label="允许截图（关闭屏幕共享隐身；主窗口和悬浮窗都会放开）"
+            />
+            <Toggle
+              checked={windowPrefs.overlayInteractive}
+              onChange={(value) => { void updateWindowPrefs({ overlayInteractive: value }) }}
+              label="悬浮窗允许鼠标拖动/缩放（关闭则保持只读隐身形态）"
+            />
+            <p className="text-[10px] text-text-muted leading-relaxed">
+              这些是本机窗口偏好，保存在用户数据目录，不需要保存按钮。
+            </p>
+          </div>
+        ) : (
+          <p className="text-[10px] text-text-muted">当前是浏览器模式，窗口/截图偏好仅在桌面端可用。</p>
+        )}
       </Section>
       </>)}
 

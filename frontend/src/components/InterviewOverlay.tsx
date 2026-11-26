@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
+import type * as ReactType from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { useInterviewWS } from '@/hooks/useInterviewWS'
 import { applyStoredColorSchemeToDocument, COLOR_SCHEME_STORAGE_KEY } from '@/lib/colorScheme'
@@ -139,9 +140,83 @@ export default function InterviewOverlay() {
 
   const overlayAnswerSlice = useMemo(() => sliceMaxLines(answerText, maxLines), [answerText, maxLines])
 
+  // 悬浮窗可拖动/缩放：默认开启，可在设置→悬浮窗里关掉（保留原来的只读隐身形态）。
+  const [overlayInteractive, setOverlayInteractive] = useState(true)
+  useEffect(() => {
+    let alive = true
+    window.electronAPI?.getWindowPrefs?.().then((prefs) => {
+      if (alive && prefs) setOverlayInteractive(prefs.overlayInteractive !== false)
+    }).catch(() => {})
+    const off = window.electronAPI?.onWindowPrefs?.((prefs) => {
+      if (prefs) setOverlayInteractive(prefs.overlayInteractive !== false)
+    })
+    return () => {
+      alive = false
+      off?.()
+    }
+  }, [])
+
+  const dragStateRef = useRef<{ x: number; y: number } | null>(null)
+  const resizeStateRef = useRef<{ x: number; y: number } | null>(null)
+
+  const onGripPointerDown = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    if (!overlayInteractive || !window.electronAPI?.moveOverlayBy) return
+    // 避免默认行为（pointer 事件本身不需要额外阻止）
+    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+    dragStateRef.current = { x: event.clientX, y: event.clientY }
+  }
+  const onGripPointerMove = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    const state = dragStateRef.current
+    if (!state) return
+    const dx = event.clientX - state.x
+    const dy = event.clientY - state.y
+    if (!dx && !dy) return
+    state.x = event.clientX
+    state.y = event.clientY
+    window.electronAPI?.moveOverlayBy?.(dx, dy).catch(() => {})
+  }
+  const onGripPointerUp = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    dragStateRef.current = null
+    try {
+      ;(event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
+  const onResizePointerDown = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    if (!overlayInteractive || !window.electronAPI?.resizeOverlayBy) return
+    // 避免默认行为（pointer 事件本身不需要额外阻止）
+    // 避免默认行为（pointer 事件本身不需要额外阻止）
+    ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+    resizeStateRef.current = { x: event.clientX, y: event.clientY }
+  }
+  const onResizePointerMove = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    const state = resizeStateRef.current
+    if (!state) return
+    const dw = event.clientX - state.x
+    const dh = event.clientY - state.y
+    if (!dw && !dh) return
+    state.x = event.clientX
+    state.y = event.clientY
+    window.electronAPI?.resizeOverlayBy?.(dw, dh).catch(() => {})
+  }
+  const onResizePointerUp = (event: ReactType.PointerEvent<HTMLDivElement>) => {
+    resizeStateRef.current = null
+    try {
+      ;(event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId)
+    } catch {
+      /* ignore */
+    }
+  }
+
   const answerScrollRef = useRef<HTMLDivElement | null>(null)
   const answerAutoFollowRef = useRef(true)
+  const followWhileGenerating = (config as { answer_autoscroll_follow?: boolean } | null)?.answer_autoscroll_follow !== false
   const updateAnswerAutoFollow = useCallback(() => {
+    if (!followWhileGenerating) {
+      answerAutoFollowRef.current = false
+      return
+    }
     if (overlayMode === 'prompt' && !overlayPromptAutoFollow) {
       answerAutoFollowRef.current = false
       return
@@ -149,20 +224,31 @@ export default function InterviewOverlay() {
     const el = answerScrollRef.current
     if (!el) return
     answerAutoFollowRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 28
-  }, [overlayMode, overlayPromptAutoFollow])
+  }, [followWhileGenerating, overlayMode, overlayPromptAutoFollow])
 
   useEffect(() => {
-    answerAutoFollowRef.current = overlayMode !== 'prompt' || overlayPromptAutoFollow
-  }, [displayedQaKey, overlayMode, activeFocusTab, overlayPromptAutoFollow])
+    answerAutoFollowRef.current =
+      followWhileGenerating && (overlayMode !== 'prompt' || overlayPromptAutoFollow)
+  }, [displayedQaKey, overlayMode, activeFocusTab, overlayPromptAutoFollow, followWhileGenerating])
+
+  // 固定在开头模式：切换到新答案时把视口重置到第一行，生成过程中不再跟随。
+  useEffect(() => {
+    if (followWhileGenerating) return
+    const el = answerScrollRef.current
+    if (!el) return
+    el.scrollTop = 0
+    answerAutoFollowRef.current = false
+  }, [displayedQaKey, followWhileGenerating])
 
   useLayoutEffect(() => {
     if (!isStreaming) return
+    if (!followWhileGenerating) return
     if (overlayMode === 'prompt' && !overlayPromptAutoFollow) return
     const el = answerScrollRef.current
     if (!el) return
     if (!answerAutoFollowRef.current) return
     el.scrollTop = el.scrollHeight
-  }, [answerText, activeFocusTab, isStreaming, overlayMode, overlayPromptAutoFollow])
+  }, [answerText, activeFocusTab, isStreaming, overlayMode, overlayPromptAutoFollow, followWhileGenerating])
 
   useLayoutEffect(() => {
     if (!enabled || !overlayVisible || overlayMode !== 'prompt') return
@@ -242,7 +328,7 @@ export default function InterviewOverlay() {
   }, [applyState, refreshShortcuts, setShortcuts, syncPrefs])
 
   const suppressMouseSelection = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault()
+    // 避免默认行为（pointer 事件本身不需要额外阻止）
     const selection = window.getSelection?.()
     if (selection && selection.rangeCount > 0) {
       selection.removeAllRanges()
@@ -250,7 +336,7 @@ export default function InterviewOverlay() {
   }, [])
 
   const suppressToolbarMouseDown = useCallback((event: React.MouseEvent<HTMLElement>) => {
-    event.preventDefault()
+    // 避免默认行为（pointer 事件本身不需要额外阻止）
   }, [])
 
   const runOverlayAction = useCallback(async (action: 'screen' | 'cancel' | 'clear' | 'hide') => {
@@ -424,7 +510,16 @@ export default function InterviewOverlay() {
     return (
       <div className="ov-root ov-root--focus">
         <div className={shellClass} style={focusShellStyle} onMouseDown={suppressMouseSelection}>
-          <div className="ov-grip" aria-hidden />
+          <div
+            className="ov-grip"
+            role="button"
+            aria-label="拖动悬浮窗"
+            onPointerDown={onGripPointerDown}
+            onPointerMove={onGripPointerMove}
+            onPointerUp={onGripPointerUp}
+            onPointerCancel={onGripPointerUp}
+            style={overlayInteractive ? undefined : { display: 'none' }}
+          />
           <div className="ov-focus-toolbar" aria-label="专注面板工具">
             {focusTools.map((tool) => (
               <button
@@ -505,6 +600,17 @@ export default function InterviewOverlay() {
               </span>
             )}
           </div>
+          {overlayInteractive && (
+            <div
+              className="ov-resize-handle"
+              role="separator"
+              aria-label="拖动调整悬浮窗大小"
+              onPointerDown={onResizePointerDown}
+              onPointerMove={onResizePointerMove}
+              onPointerUp={onResizePointerUp}
+              onPointerCancel={onResizePointerUp}
+            />
+          )}
         </div>
       </div>
     )
@@ -526,6 +632,17 @@ export default function InterviewOverlay() {
         >
           {renderedAnswer}
         </div>
+        {overlayInteractive && (
+          <div
+            className="ov-resize-handle"
+            role="separator"
+            aria-label="拖动调整悬浮窗大小"
+            onPointerDown={onResizePointerDown}
+            onPointerMove={onResizePointerMove}
+            onPointerUp={onResizePointerUp}
+            onPointerCancel={onResizePointerUp}
+          />
+        )}
       </div>
     </div>
   )
@@ -768,3 +885,4 @@ function FocusSection({
     </section>
   )
 }
+

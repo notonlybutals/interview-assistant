@@ -20,6 +20,23 @@ assist_router = importlib.import_module("api.assist.pipeline")
 
 
 @pytest.fixture(autouse=True)
+def _pin_tech_interview_mode(monkeypatch):
+    """prompt 断言按技术岗写；用户本机 config.json 可能切到 general 模式。"""
+    from services.llm import prompts
+
+    original_get_config = prompts.get_config
+
+    def _get():
+        cfg = original_get_config()
+        try:
+            return cfg.model_copy(update={"interview_mode": "tech"})
+        except Exception:
+            return cfg
+
+    monkeypatch.setattr(prompts, "get_config", _get)
+
+
+@pytest.fixture(autouse=True)
 def reset_assist_globals(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(assist_router, "broadcast", lambda data: None)
     reset_session()
@@ -47,6 +64,8 @@ def _cfg(**overrides):
         assist_asr_group_max_wait_sec=1.0,
         assist_asr_interrupt_running=False,
         assist_high_churn_short_answer=False,
+        # 这些用例验证的是「严格判定」旧行为；放宽判定单独测。
+        assist_asr_question_relaxed=False,
     )
     base.update(overrides)
     return SimpleNamespace(**base)

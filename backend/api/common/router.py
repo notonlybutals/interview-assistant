@@ -79,6 +79,8 @@ class ConfigUpdate(BaseModel):
     silence_threshold: Optional[float] = None
     silence_duration: Optional[float] = None
     answer_autoscroll_bottom_px: Optional[int] = None
+    answer_autoscroll_follow: Optional[bool] = None
+    assist_asr_question_relaxed: Optional[bool] = None
     transcription_min_sig_chars: Optional[int] = None
     assist_transcription_merge_gap_sec: Optional[float] = None
     assist_transcription_merge_max_sec: Optional[float] = None

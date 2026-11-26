@@ -60,6 +60,7 @@ def build_config_payload(cfg) -> dict:
         "silence_threshold": cfg.silence_threshold,
         "silence_duration": cfg.silence_duration,
         "answer_autoscroll_bottom_px": max(4, min(400, getattr(cfg, "answer_autoscroll_bottom_px", 40))),
+        "answer_autoscroll_follow": bool(getattr(cfg, "answer_autoscroll_follow", False)),
         "transcription_min_sig_chars": max(1, min(50, getattr(cfg, "transcription_min_sig_chars", 2))),
         "assist_transcription_merge_gap_sec": max(
             0.0, min(15.0, float(getattr(cfg, "assist_transcription_merge_gap_sec", 2.0) or 0.0))

@@ -121,9 +121,9 @@ let lastOverlayState = {
   maxLines: 0,
 };
 
-// 窗口偏好（任务栏显示 / 屏幕共享隐身）：默认在任务栏显示，用户随时能找回窗口；
-// 需要隐身时可在托盘菜单关闭。持久化到 userData，下次启动沿用。
-let windowPrefs = { showInTaskbar: true, contentProtection: true };
+// 窗口偏好（任务栏显示 / 屏幕共享隐身 / 悬浮窗可拖动缩放）：默认在任务栏显示，
+// 用户随时能找回窗口；需要隐身时可在设置或托盘菜单关闭。持久化到 userData。
+let windowPrefs = { showInTaskbar: true, contentProtection: true, overlayInteractive: true };
 let trayHintShown = false;
 
 function getWindowPrefsFilePath() {
@@ -136,8 +136,9 @@ function loadWindowPrefs() {
     const data = JSON.parse(raw);
     if (data && typeof data === 'object') {
       windowPrefs = {
-        showInTaskbar: data.showInTaskbar === true,
+        showInTaskbar: data.showInTaskbar !== false,
         contentProtection: data.contentProtection !== false,
+        overlayInteractive: data.overlayInteractive !== false,
       };
     }
   } catch {
@@ -173,6 +174,19 @@ function applyShowInTaskbar(enabled) {
     mainWindow.setSkipTaskbar(!windowPrefs.showInTaskbar);
   }
   saveWindowPrefs();
+}
+
+function applyOverlayInteractive(enabled) {
+  windowPrefs.overlayInteractive = Boolean(enabled);
+  saveWindowPrefs();
+  // 前端 overlay 会通过 overlay-state 收到 interactive 字段并据此显示拖拽/缩放把手。
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    try {
+      overlayWindow.webContents.send('window-prefs', { ...windowPrefs });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function showTrayHintOnce() {
@@ -522,9 +536,10 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Windows 下最小化 = 隐藏到托盘；首次隐藏时弹气泡提示怎么找回窗口
+  // Windows 下最小化：任务栏可见时正常最小化（用户点任务栏能还原）；
+  // 只有关闭「在任务栏显示」的隐身模式才最小化到托盘。
   mainWindow.on('minimize', (e) => {
-    if (process.platform === 'win32') {
+    if (process.platform === 'win32' && !windowPrefs.showInTaskbar) {
       e.preventDefault();
       mainWindow.hide();
       showTrayHintOnce();
@@ -1152,19 +1167,54 @@ ipcMain.handle('toggle-always-on-top', () => {
   return next;
 });
 ipcMain.handle('toggle-content-protection', () => {
-  if (!mainWindow) return true;
-  const webContents = mainWindow.webContents;
-  const isProtected = mainWindow._contentProtection !== false;
-  mainWindow._contentProtection = !isProtected;
-  mainWindow.setContentProtection(!isProtected);
-  return !isProtected;
+  applyContentProtection(!windowPrefs.contentProtection);
+  return windowPrefs.contentProtection;
 });
 ipcMain.handle('get-window-state', () => ({
   maximized: mainWindow?.isMaximized() ?? false,
   alwaysOnTop: mainWindow?.isAlwaysOnTop() ?? false,
-  contentProtection: mainWindow?._contentProtection !== false,
+  contentProtection: windowPrefs.contentProtection !== false,
   visible: mainWindow?.isVisible() ?? false,
 }));
+ipcMain.handle('window-prefs:get', () => ({ ...windowPrefs }));
+ipcMain.handle('window-prefs:set', (_event, payload = {}) => {
+  if (payload && typeof payload === 'object') {
+    if ('showInTaskbar' in payload) applyShowInTaskbar(payload.showInTaskbar);
+    if ('contentProtection' in payload) applyContentProtection(payload.contentProtection);
+    if ('overlayInteractive' in payload) applyOverlayInteractive(payload.overlayInteractive);
+  }
+  return { ...windowPrefs };
+});
+ipcMain.handle('overlay-move-by', (_event, dx, dy) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return { ok: false };
+  const stepX = Math.round(Number(dx) || 0);
+  const stepY = Math.round(Number(dy) || 0);
+  if (!stepX && !stepY) return { ok: true };
+  const [x, y] = overlayWindow.getPosition();
+  overlayWindow.setPosition(x + stepX, y + stepY);
+  return { ok: true };
+});
+ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return { ok: false };
+  const stepW = Math.round(Number(dw) || 0);
+  const stepH = Math.round(Number(dh) || 0);
+  if (!stepW && !stepH) return { ok: true };
+  const bounds = overlayWindow.getBounds();
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.round(bounds.width / 2),
+    y: bounds.y + Math.round(bounds.height / 2),
+  });
+  const work = display.workArea;
+  const nextWidth = Math.max(180, Math.min(work.width, bounds.width + stepW));
+  const nextHeight = Math.max(72, Math.min(work.height, bounds.height + stepH));
+  overlayWindow.setBounds({
+    x: bounds.x,
+    y: bounds.y,
+    width: nextWidth,
+    height: nextHeight,
+  });
+  return { ok: true };
+});
 ipcMain.handle('sync-overlay-window', (_event, payload = {}) => {
   const style = {};
   if ('opacity' in payload) {

@@ -181,6 +181,9 @@ class AppConfig(BaseModel):
     max_parallel_answers: int = 2
     # 答案区流式输出时，距底部小于该像素则自动滚到底（调小便于手动上滑回看）
     answer_autoscroll_bottom_px: int = 40
+    # 生成时是否自动跟随到底部。默认 False：新答案从第一行开始看，后面的内容自己往下长，
+    # 不在阅读中途把视口滚到最后一行（面试场景按顺序读更合理）。
+    answer_autoscroll_follow: bool = False
     # 转写广播/入历史/自动答题：去标点后的有效字符（中英数字）至少为该值；过滤「嗯」等
     transcription_min_sig_chars: int = 2
     # 实时辅助：多段 ASR 合并后再写入转写区显示。上一段结束后若超过该秒数仍无新段则送出；
@@ -201,6 +204,8 @@ class AppConfig(BaseModel):
     assist_vad_noise_margin_db: float = 6.0
     # 实时辅助：问句候选组在最后一条有效追问后静默超过该秒数再确认提交
     assist_asr_confirm_window_sec: float = 0.3
+    # 实时辅助：放宽问句判定。宁多答不漏答：无法命中问句线索的长句也作为候选提交。
+    assist_asr_question_relaxed: bool = True
     # 实时辅助：候选组含强问句信号（promote）时，最后一条后静默超过该秒数立即提交。
     # 原先是 1.15s 的 getattr 硬编码，不可配且白等 ≈1s。
     assist_asr_fast_confirm_sec: float = 0.45

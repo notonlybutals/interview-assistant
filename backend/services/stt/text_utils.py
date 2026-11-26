@@ -657,6 +657,7 @@ def is_asr_question_constraint_tail(text: str) -> bool:
 def is_viable_asr_question_group(
     texts: list[str],
     min_significant_chars: int = 4,
+    relaxed: bool = False,
 ) -> bool:
     cleaned_parts: list[str] = []
     saw_promote = False
@@ -675,6 +676,12 @@ def is_viable_asr_question_group(
     if len(cleaned_parts) >= 2:
         return True
     if len(cleaned_parts) == 1:
+        # 放宽模式：宁多答不漏答——足够长、带「你/您」或岗位/工作类字眼的长句，
+        # 即使没命中问句线索也提交（面试官很多提问是陈述句/省略问号的口气）。
+        if relaxed:
+            only = cleaned_parts[0]
+            if transcription_significant_len(only) >= max(8, int(min_significant_chars) + 4):
+                return True
         return False
     merged = "".join(cleaned_parts)
     return transcription_significant_len(merged) >= max(3, int(min_significant_chars))

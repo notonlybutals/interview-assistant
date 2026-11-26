@@ -22,6 +22,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setShortcutsSuspended: (on) => ipcRenderer.invoke('set-shortcuts-suspended', on),
   destroyOverlay: () => ipcRenderer.invoke('destroy-overlay'),
   moveOverlayWindow: (dx, dy) => ipcRenderer.invoke('move-overlay-window', dx, dy),
+  moveOverlayBy: (dx, dy) => ipcRenderer.invoke('overlay-move-by', dx, dy),
+  resizeOverlayBy: (dw, dh) => ipcRenderer.invoke('overlay-resize-by', dw, dh),
+  getWindowPrefs: () => ipcRenderer.invoke('window-prefs:get'),
+  setWindowPrefs: (payload) => ipcRenderer.invoke('window-prefs:set', payload),
+  onWindowPrefs: (listener) => {
+    const wrapped = (_event, payload) => listener(payload);
+    ipcRenderer.on('window-prefs', wrapped);
+    return () => ipcRenderer.removeListener('window-prefs', wrapped);
+  },
   overlayDragStart: () => ipcRenderer.sendSync('overlay-drag-start'),
   overlayDragEnd: () => ipcRenderer.send('overlay-drag-end'),
   getOverlayState: () => ipcRenderer.invoke('get-overlay-state'),
