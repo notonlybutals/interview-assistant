@@ -17,13 +17,14 @@ if (process.platform !== 'win32' || process.arch !== 'x64') {
   throw new Error('Build this package on Windows x64.');
 }
 if (!fs.existsSync(python)) {
-  throw new Error('Create .venv with Python 3.11 and install backend dependencies, soundcard, funasr, torch and torchaudio first.');
+  throw new Error('Create .venv with Python 3.11/3.12 and install backend dependencies, soundcard, funasr, torch and torchaudio first.');
 }
 const runtime = JSON.parse(execFileSync(python, ['-c',
   'import json, sys, struct; print(json.dumps({"base": sys.base_prefix, "version": list(sys.version_info[:2]), "bits": struct.calcsize("P") * 8}))',
 ], { encoding: 'utf8' }));
-if (runtime.bits !== 64 || runtime.version.join('.') !== '3.11') {
-  throw new Error('The bundled runtime must be Python 3.11 x64.');
+// 打包运行时用 3.11/3.12 均可：实际验证 3.12 x64 的 .venv 可以正常跑 FunASR/Torch。
+if (runtime.bits !== 64 || ![ '3.11', '3.12' ].includes(runtime.version.join('.'))) {
+  throw new Error('The bundled runtime must be Python 3.11/3.12 x64.');
 }
 run(python, ['-c', 'import importlib.util; modules = ["uvicorn", "soundcard", "torch", "torchaudio", "faster_whisper", "funasr"]; assert all(importlib.util.find_spec(m) for m in modules), "Missing runtime dependency"; print("Python dependencies found")']);
 run(process.execPath, [path.join(root, 'frontend', 'node_modules', 'typescript', 'bin', 'tsc'), '-b'], path.join(root, 'frontend'));
