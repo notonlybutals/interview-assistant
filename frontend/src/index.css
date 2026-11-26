@@ -1241,6 +1241,35 @@ code, pre, .font-mono {
   border-bottom: 2px solid rgba(255, 255, 255, 0.35);
   border-bottom-right-radius: 3px;
 }
+/* 右上角关闭按钮：与拖动/缩放同属「悬浮窗允许鼠标调整」开关 */
+.ov-close-btn {
+  position: fixed;
+  top: 4px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 12, 20, 0.55);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 140ms ease, background 140ms ease;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2147483001;
+}
+.ov-close-btn:hover {
+  opacity: 1;
+  background: rgba(220, 60, 60, 0.75);
+  color: #fff;
+}
+
 .ov-shell:hover .ov-resize-handle::after {
   border-color: rgba(255, 255, 255, 0.7);
 }

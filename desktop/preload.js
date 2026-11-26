@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   destroyOverlay: () => ipcRenderer.invoke('destroy-overlay'),
   moveOverlayWindow: (dx, dy) => ipcRenderer.invoke('move-overlay-window', dx, dy),
   moveOverlayBy: (dx, dy) => ipcRenderer.invoke('overlay-move-by', dx, dy),
+  hideOverlay: () => ipcRenderer.invoke('overlay-hide'),
   resizeOverlayBy: (dw, dh) => ipcRenderer.invoke('overlay-resize-by', dw, dh),
   getWindowPrefs: () => ipcRenderer.invoke('window-prefs:get'),
   setWindowPrefs: (payload) => ipcRenderer.invoke('window-prefs:set', payload),

@@ -169,7 +169,27 @@ function applyContentProtection(enabled) {
 }
 
 function applyShowInTaskbar(enabled) {
-  windowPrefs.showInTaskbar = Boolean(enabled);
+  const next = Boolean(enabled);
+  if (process.platform === 'win32' && !next && mainWindow && !mainWindow.isDestroyed()) {
+    // 这台机器上出现过「托盘图标不可见 + 关掉任务栏 = 窗口彻底消失」的情况，
+    // 关闭前明确警告一次，并提供取消。
+    try {
+      const { dialog } = require('electron');
+      const choice = dialog.showMessageBoxSync(mainWindow, {
+        type: 'warning',
+        buttons: ['仍然关闭（之后按 Ctrl+B 找回）', '取消'],
+        defaultId: 1,
+        cancelId: 1,
+        title: '关闭「在任务栏显示」',
+        message: '关闭后，最小化会隐藏到托盘。',
+        detail: '如果本机托盘图标不可见，窗口将只能通过 Ctrl+B 快捷键找回。确定继续吗？',
+      });
+      if (choice !== 0) return;
+    } catch {
+      /* ignore */
+    }
+  }
+  windowPrefs.showInTaskbar = next;
   if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
     // 托盘没建起来时不允许把任务栏也关掉，否则窗口会彻底消失、只能靠快捷键找回。
     if (!windowPrefs.showInTaskbar && !tray) {
@@ -834,7 +854,6 @@ function createTray() {
     }
     if (!icon || icon.isEmpty()) {
       console.warn('createTray: icon assets empty, using generated icon');
-      appendTrayLog('icon assets empty, using generated icon');
       icon = createTrayIcon();
     }
 
@@ -1114,10 +1133,13 @@ const shortcutCallbacks = {
       createOverlayWindow();
       showOverlayWindow();
     } else {
-      // 快捷键仅切换 overlay 可见性；如果主窗口是被 overlay 自动隐藏的，关闭 overlay 时把它还回来。
+      // 快捷键关闭 overlay：直接销毁窗口而不是 hide()。
+      // Windows 上透明/置顶窗口 hide→show 会留下残影、且鼠标事件可能失效；
+      // 销毁重建后拖动/缩放/渲染都是干净的（位置/尺寸已持久化，重开会恢复）。
       if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow._pendingShow = false;
-        overlayWindow.hide();
+        overlayWindow.destroy();
+        overlayWindow = null;
       }
       if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
         mainWindow._hiddenByOverlay = false;
@@ -1215,6 +1237,7 @@ ipcMain.handle('overlay-move-by', (_event, dx, dy) => {
   if (!stepX && !stepY) return { ok: true };
   const [x, y] = overlayWindow.getPosition();
   overlayWindow.setPosition(x + stepX, y + stepY);
+  schedulePersistOverlayPosition(true);
   return { ok: true };
 });
 ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
@@ -1236,6 +1259,27 @@ ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
     width: nextWidth,
     height: nextHeight,
   });
+  schedulePersistOverlayPosition(true);
+  return { ok: true };
+});
+ipcMain.handle('overlay-hide', () => {
+  const nextState = {
+    ...lastOverlayState,
+    initialized: true,
+    visible: false,
+    enabled: Boolean(lastOverlayState?.enabled),
+  };
+  sendOverlayState(nextState);
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow._pendingShow = false;
+    overlayWindow.destroy();
+    overlayWindow = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
+    mainWindow._hiddenByOverlay = false;
+    mainWindow.show();
+    mainWindow.focus();
+  }
   return { ok: true };
 });
 ipcMain.handle('sync-overlay-window', (_event, payload = {}) => {

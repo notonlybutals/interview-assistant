@@ -601,6 +601,20 @@ export default function InterviewOverlay() {
             )}
           </div>
           {overlayInteractive && (
+            <button
+              type="button"
+              className="ov-close-btn"
+              title="关闭悬浮窗（Ctrl+O 可再次打开）"
+              aria-label="关闭悬浮窗"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => {
+                window.electronAPI?.hideOverlay?.().catch(() => {})
+              }}
+            >
+              ×
+            </button>
+          )}
+          {overlayInteractive && (
             <div
               className="ov-resize-handle"
               role="separator"
@@ -632,6 +646,20 @@ export default function InterviewOverlay() {
         >
           {renderedAnswer}
         </div>
+        {overlayInteractive && (
+          <button
+            type="button"
+            className="ov-close-btn"
+            title="关闭悬浮窗（Ctrl+O 可再次打开）"
+            aria-label="关闭悬浮窗"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => {
+              window.electronAPI?.hideOverlay?.().catch(() => {})
+            }}
+          >
+            ×
+          </button>
+        )}
         {overlayInteractive && (
           <div
             className="ov-resize-handle"

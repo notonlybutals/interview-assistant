@@ -29,6 +29,7 @@ declare global {
       destroyOverlay?: () => Promise<{ ok: boolean }>
       moveOverlayWindow?: (dx: number, dy: number) => Promise<void>
       moveOverlayBy?: (dx: number, dy: number) => Promise<{ ok: boolean }>
+      hideOverlay?: () => Promise<{ ok: boolean }>
       resizeOverlayBy?: (dw: number, dh: number) => Promise<{ ok: boolean }>
       getWindowPrefs?: () => Promise<WindowPrefsPayload>
       setWindowPrefs?: (payload: Partial<WindowPrefsPayload>) => Promise<WindowPrefsPayload>
