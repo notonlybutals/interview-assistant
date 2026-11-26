@@ -3,17 +3,21 @@ chcp 65001 >nul
 setlocal
 pushd "%~dp0" || exit /b 1
 
-rem 兼容模式启动：
-rem   1) 清掉 ELECTRON_RUN_AS_NODE（从 Electron 宿主/DSH 环境继承时会以纯 Node 运行而崩溃）
-rem   2) IA_ELECTRON_NO_SANDBOX=1 -> start.py 给 Electron 传 --no-sandbox
-rem       （部分 Windows 机器上安全软件/系统策略会让 Chromium 沙箱初始化即 STATUS_BREAKPOINT，
-rem        现象是双击后只弹一个"桌面应用启动失败"、日志里没有任何 Electron 输出）
+rem Compatibility launcher:
+rem   1) clear ELECTRON_RUN_AS_NODE (inherited from Electron-based hosts)
+rem   2) IA_ELECTRON_NO_SANDBOX=1 -> start.py passes --no-sandbox to Electron
+rem      (some Windows machines crash on Chromium sandbox init: STATUS_BREAKPOINT)
+rem   3) append to log\launch.log so "double click did nothing" is diagnosable
+
+if not exist "log" mkdir "log"
+>> "log\launch.log" echo [%date% %time%] compat launcher: start
 
 set "ELECTRON_RUN_AS_NODE="
 set "IA_ELECTRON_NO_SANDBOX=1"
 
 if not exist ".venv\Scripts\python.exe" (
-    echo 找不到项目的 .venv\Scripts\python.exe，请先安装项目依赖。
+    echo Missing .venv\Scripts\python.exe - install dependencies first.
+    >> "log\launch.log" echo [%date% %time%] compat launcher: missing venv python
     pause
     popd
     exit /b 1
@@ -21,6 +25,7 @@ if not exist ".venv\Scripts\python.exe" (
 set "PATH=%CD%\.venv\Scripts;%PATH%"
 ".venv\Scripts\python.exe" start.py %*
 set "result=%errorlevel%"
+>> "log\launch.log" echo [%date% %time%] compat launcher: python exit=%result%
 if not "%result%"=="0" pause
 popd
 exit /b %result%

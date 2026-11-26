@@ -297,8 +297,22 @@ def ensure_electron():
 # Port management
 # ---------------------------------------------------------------------------
 
-def kill_port(port: int):
-    """Kill any process occupying the given port."""
+def _port_in_use(port: int, timeout: float = 0.3) -> bool:
+    """端口上是否已有进程在监听（只连本机回环，不触发业务请求）。"""
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def kill_port(port: int) -> bool:
+    """Kill any process occupying the given port.
+
+    Returns True when the port is free afterwards. 如果占用进程权限比当前进程高
+    （例如上一次用管理员权限启动后残留的后台进程），taskkill 会失败；调用方必须
+    检查返回值并给出明确错误，而不是继续启动后「什么都没发生」。
+    """
     system = platform.system()
     killed = False
     try:
@@ -328,6 +342,7 @@ def kill_port(port: int):
         print(f"[WARN] 清理端口 {port} 时出错: {e}")
     if killed:
         time.sleep(0.5)
+    return not _port_in_use(port)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +410,12 @@ def run_desktop_mode(port: int):
     # Pre-clean the port BEFORE Electron launches (Electron spawns
     # start.py --mode network internally, but if a zombie process holds
     # the port, it would fail deep inside that chain with a confusing error).
-    kill_port(port)
+    if not kill_port(port):
+        print()
+        print(f"[ERROR] 端口 {port} 仍被占用，启动已中止（占用进程可能比当前程序权限更高）。")
+        print("  常见原因：上一次用管理员权限启动后残留的后台进程，或其它程序占用了该端口。")
+        print("  处理：在任务管理器结束残留的 InterviewAssistant / python 进程，或重启电脑后再试。")
+        sys.exit(1)
 
     # Windows: 如果当前进程还有控制台窗口，以无窗口模式重启自己并监控
     # 就绪：启动成功→隐藏本窗口；失败→保留窗口并展示启动日志，方便排错。
@@ -498,6 +518,9 @@ def run_network_mode(port: int):
 def main():
     # Switch console to UTF-8 immediately on Windows (before any print)
     _set_utf8_console()
+    # 从 Electron 宿主（DSH/Codex 等）继承时 ELECTRON_RUN_AS_NODE=1 会让 electron.exe
+    # 以纯 Node 运行、require('electron') 直接崩。启动器自己清掉，避免依赖外部 bat。
+    os.environ.pop("ELECTRON_RUN_AS_NODE", None)
 
     parser = argparse.ArgumentParser(description="面试助手启动器")
     parser.add_argument("--mode", choices=["desktop", "network"], default="desktop",

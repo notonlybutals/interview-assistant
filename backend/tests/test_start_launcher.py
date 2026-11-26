@@ -24,6 +24,9 @@ def _patch_common(monkeypatch, tmp_path, *, ready, poll_results):
     log_path = tmp_path / "startup-console.log"
     monkeypatch.setattr(start, "STARTUP_LOG", str(log_path))
     monkeypatch.setattr(start.platform, "system", lambda: "Windows")
+    # 不依赖真实端口状态（本机会有正在运行的应用占用 18080）
+    monkeypatch.setattr(start, "kill_port", lambda _port: True)
+    monkeypatch.setattr(start, "_port_in_use", lambda _port, timeout=0.3: False)
     monkeypatch.setattr(start, "_app_ready", lambda port, timeout=1.5: ready())
     popen_calls = []
 
@@ -145,7 +148,8 @@ def test_desktop_run_retries_with_no_sandbox_on_sandbox_crash(monkeypatch, tmp_p
     monkeypatch.setattr(start.os, "environ", {"IA_HIDE_CONSOLE": "1"})
     monkeypatch.setattr(start, "DESKTOP_DIR", str(tmp_path))
     monkeypatch.setattr(start, "ensure_electron", lambda: True)
-    monkeypatch.setattr(start, "kill_port", lambda _port: None)
+    monkeypatch.setattr(start, "kill_port", lambda _port: True)
+    monkeypatch.setattr(start, "_port_in_use", lambda _port, timeout=0.3: False)
     monkeypatch.setattr(start, "_find_npx", lambda: "npx")
     monkeypatch.setattr(start, "_electron_command", lambda _npx: ["electron"])
     calls = []
