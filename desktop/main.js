@@ -706,6 +706,29 @@ function sendShortcutsState() {
   });
 }
 
+function closeOverlayAndPersist() {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  try {
+    persistOverlayPosition(true);
+  } catch (error) {
+    appendOverlayDebug(`persist position before close failed: ${error?.message || error}`);
+  }
+  overlayWindow._pendingShow = false;
+  overlayWindow.destroy();
+  overlayWindow = null;
+}
+
+function preheatOverlaySoon() {
+  // 关闭后后台预建一个隐藏的 overlay，下次 Ctrl+O 打开可即时显示（不用等页面加载）。
+  setTimeout(() => {
+    try {
+      if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
+    } catch (error) {
+      appendOverlayDebug(`overlay preheat failed: ${error?.message || error}`);
+    }
+  }, 500);
+}
+
 function showOverlayWindow() {
   if (!overlayWindow || overlayWindow.isDestroyed()) {
     appendOverlayDebug('showOverlayWindow skip: no window');
@@ -1168,16 +1191,13 @@ const shortcutCallbacks = {
       // Windows 上透明/置顶窗口 hide→show 会留下残影、且鼠标事件可能失效；
       // 销毁重建后拖动/缩放/渲染都是干净的（位置/尺寸已持久化，重开会恢复）。
       appendOverlayDebug('toggle close');
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        overlayWindow._pendingShow = false;
-        overlayWindow.destroy();
-        overlayWindow = null;
-      }
+      closeOverlayAndPersist();
       if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
         mainWindow._hiddenByOverlay = false;
         mainWindow.show();
         mainWindow.focus();
       }
+      preheatOverlaySoon();
     }
   },
   moveOverlayToMouse: () => {
@@ -1303,16 +1323,13 @@ ipcMain.handle('overlay-hide', () => {
     enabled: Boolean(lastOverlayState?.enabled),
   };
   sendOverlayState(nextState);
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow._pendingShow = false;
-    overlayWindow.destroy();
-    overlayWindow = null;
-  }
+  closeOverlayAndPersist();
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
     mainWindow._hiddenByOverlay = false;
     mainWindow.show();
     mainWindow.focus();
   }
+  preheatOverlaySoon();
   return { ok: true };
 });
 ipcMain.handle('sync-overlay-window', (_event, payload = {}) => {
@@ -1658,3 +1675,4 @@ app.on('will-quit', () => {
     pythonProcess = null;
   }
 });
+
