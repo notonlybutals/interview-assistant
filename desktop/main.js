@@ -88,8 +88,15 @@ if (process.platform === 'win32') {
   }
 }
 
-// 打包后（electron-builder）资源在 resources/runtime 下；开发态仍是仓库根目录。
-const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.resolve(__dirname, '..');
+// 打包后资源布局有两种历史形态：
+//   A) 新版 electron-builder：resources/{python,backend,frontend/dist,backend-entry.py}
+//   B) 旧版自定义打包：resources/runtime/{python,backend,frontend/dist,start.py}
+// 两种都支持；开发态用仓库根目录。
+const ROOT = app.isPackaged
+  ? (fs.existsSync(path.join(process.resourcesPath, 'runtime'))
+    ? path.join(process.resourcesPath, 'runtime')
+    : process.resourcesPath)
+  : path.resolve(__dirname, '..');
 let PORT = parseInt(process.env.PORT || '18080', 10);
 let SERVER_URL = `http://127.0.0.1:${PORT}`;
 // 注意：不要在这里 app.setPath('userData', ...)。Chromium 的单实例锁在很早期创建，
@@ -467,23 +474,41 @@ function waitForServer(timeout = 40000) {
   });
 }
 
-function startPythonBackend() {
-  const isWin = process.platform === 'win32';
-  let python = isWin ? 'python' : 'python3';
-  if (app.isPackaged) {
-    const bundled = path.join(ROOT, 'python', isWin ? 'python.exe' : path.join('bin', 'python3'));
-    if (fs.existsSync(bundled)) python = bundled;
+function killPortWindows(port) {
+  if (process.platform !== 'win32') return;
+  try {
+    const { execFileSync } = require('child_process');
+    const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8', windowsHide: true });
+    const pids = new Set();
+    for (const line of String(out).split(/\r?\n/)) {
+      if (line.includes(`:${port}`) && line.includes('LISTENING')) {
+        const pid = line.trim().split(/\s+/).pop();
+        if (pid && pid !== String(process.pid)) pids.add(pid);
+      }
+    }
+    for (const pid of pids) {
+      try { execFileSync('taskkill', ['/F', '/PID', pid], { stdio: 'ignore', windowsHide: true }); } catch { /* ignore */ }
+    }
+  } catch {
+    /* ignore */
   }
-  const args = [
-    path.join(ROOT, 'start.py'),
-    '--mode', 'network',
-    '--no-build',
-    '--port', String(PORT),
-  ];
+}
+
+function startPythonBackend() {
+  let python = process.platform === 'win32' ? 'python' : 'python3';
+  let args = [path.join(ROOT, 'start.py'), '--mode', 'network', '--no-build', '--port', String(PORT)];
   const env = { ...process.env };
-  // 国内直连 huggingface.co 基本不通，给后端注入 HF 镜像兜底；用户自己设了就以用户的为准。
-  if (!String(env.HF_ENDPOINT || '').trim()) env.HF_ENDPOINT = 'https://hf-mirror.com';
   if (app.isPackaged) {
+    // 清掉端口占用（例如残留的旧版进程），避免 waitForServer 连到旧后端起窗口。
+    killPortWindows(PORT);
+    python = path.join(ROOT, 'python', process.platform === 'win32' ? 'python.exe' : path.join('bin', 'python3'));
+    const bundledEntry = path.join(ROOT, 'backend-entry.py');
+    if (fs.existsSync(bundledEntry)) {
+      args = ['-I', '-B', '-u', bundledEntry, String(PORT)];
+    } else {
+      // 旧 runtime 布局：用 start.py 的 network 模式（不依赖 backend-entry.py）。
+      args = [path.join(ROOT, 'start.py'), '--mode', 'network', '--no-build', '--port', String(PORT)];
+    }
     const userDir = app.getPath('userData');
     const dataRoot = path.join(userDir, 'backend');
     fs.mkdirSync(dataRoot, { recursive: true });
@@ -500,6 +525,7 @@ function startPythonBackend() {
       NUMBA_CACHE_DIR: path.join(userDir, 'cache', 'numba'),
     });
   }
+  if (!String(env.HF_ENDPOINT || '').trim()) env.HF_ENDPOINT = 'https://hf-mirror.com';
   pythonProcess = spawn(python, args, {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
