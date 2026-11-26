@@ -470,17 +470,22 @@ function waitForServer(timeout = 40000) {
 }
 
 function startPythonBackend() {
-  let python = process.platform === 'win32' ? 'python' : 'python3';
-  let args = [
+  const isWin = process.platform === 'win32';
+  let python = isWin ? 'python' : 'python3';
+  if (app.isPackaged) {
+    const bundled = path.join(ROOT, 'python', isWin ? 'python.exe' : path.join('bin', 'python3'));
+    if (fs.existsSync(bundled)) python = bundled;
+  }
+  const args = [
     path.join(ROOT, 'start.py'),
     '--mode', 'network',
     '--no-build',
     '--port', String(PORT),
   ];
   const env = { ...process.env };
+  // 国内直连 huggingface.co 基本不通，给后端注入 HF 镜像兜底；用户自己设了就以用户的为准。
+  if (!String(env.HF_ENDPOINT || '').trim()) env.HF_ENDPOINT = 'https://hf-mirror.com';
   if (app.isPackaged) {
-    python = path.join(ROOT, 'python', 'python.exe');
-    args = ['-I', '-B', '-u', path.join(ROOT, 'backend-entry.py'), String(PORT)];
     const userDir = app.getPath('userData');
     const dataRoot = path.join(userDir, 'backend');
     fs.mkdirSync(dataRoot, { recursive: true });
