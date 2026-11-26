@@ -441,8 +441,13 @@ async def api_update_config(body: ConfigUpdate):
                 d["think_mode"] = False
             elif val != "off" and d.get("think_mode", False) is False:
                 d["think_mode"] = True
-        if d.get("language") and d["language"] not in LANGUAGE_OPTIONS:
-            raise HTTPException(422, f"language 必须是 {list(LANGUAGE_OPTIONS)} 之一")
+        # 岗位/语言允许自由填写（非技术岗、非编程语言场景，例如「酒店管培生 / 无」）。
+        # 旧实现只对 language 做了固定白名单 422，导致这类自定义值保存失败，
+        # 前端界面看起来填了、实际后端仍是旧值。这里只做去空白和长度兜底。
+        if "position" in d:
+            d["position"] = str(d["position"] or "").strip()[:60]
+        if "language" in d:
+            d["language"] = str(d["language"] or "").strip()[:60]
         if "kb_top_k" in d:
             d["kb_top_k"] = max(1, min(20, int(d["kb_top_k"])))
         if "kb_deadline_ms" in d:

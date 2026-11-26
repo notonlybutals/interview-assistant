@@ -220,6 +220,20 @@ def _kb_reference_section(hits: Sequence[KBHit], excerpt_chars: int = 300) -> st
     return "\n".join(lines) + "\n"
 
 
+_NONE_LANGUAGE_VALUES = {"", "无", "不限", "不限定", "none", "n/a", "na", "-", "text", "无（不限）"}
+
+
+def _normalized_position(position: str) -> str:
+    """岗位允许自由填写（非技术岗也常见），只做去空白和长度兜底。"""
+    return (position or "").strip()[:60] or "目标"
+
+
+def _normalized_language(language: str) -> str:
+    """语言允许自由填写；「无 / 不限」等视为不限定语言（不写进 prompt）。"""
+    value = (language or "").strip()[:60]
+    return "" if value.lower() in _NONE_LANGUAGE_VALUES else value
+
+
 def _base_prompt_prefix(
     position: str,
     language: str,
@@ -229,9 +243,17 @@ def _base_prompt_prefix(
     kb_citation = ""
     if kb_section:
         kb_citation = "- 如果回答用到 <kb_context> 中的信息，末尾用 [1] / [2] 角标标注；不要原文整段复述。\n"
+    # 岗位/语言都可能被用户改成非技术岗、非编程语言（例如「酒店管培生 / 无」），
+    # 这里按实际填写生成身份描述，不再硬编码「技术面试 / 日常主要使用 X」。
+    pos = _normalized_position(position)
+    lang = _normalized_language(language)
+    identity = f"身份：你正在参加「{pos}」岗位的面试。"
+    if lang:
+        identity += f"日常主要使用 {lang}。"
+    identity += "\n"
     return (
-        f"身份：你是一名正在参加技术面试的 {position} 候选人，日常主要使用 {language}。\n"
-        "表达：真人候选人口吻，结论先行，自然解释依据、边界和取舍。\n"
+        identity
+        + "表达：真人候选人口吻，结论先行，自然解释依据、边界和取舍。\n"
         f"{_HUMAN_VOICE_RULE}\n"
         f"{resume_section}"
         f"{kb_section}"
@@ -280,6 +302,18 @@ def _asr_realtime_prompt_body(
             + _FOLLOWUP_COHERENCE
             + _FEWSHOT_ASR
         )
+    if language_lower:
+        code_rules = (
+            "- 仅当用户明确要求\u201c写代码/实现一下/给 SQL/伪代码\u201d时输出代码；\n"
+            f"- 非 SQL 代码使用 ```{language_lower}，SQL 使用 ```sql；\n"
+            f"- SQL 题优先 SQL，不要强行改成 {language}。\n\n"
+        )
+    else:
+        code_rules = (
+            "- 仅当用户明确要求\u201c写代码/实现一下/给 SQL/伪代码\u201d时输出代码；\n"
+            "- 需要代码时使用合适的代码块；SQL 使用 ```sql；\n"
+            "- SQL 题优先 SQL。\n\n"
+        )
     body = (
         "\n场景：本轮输入来自实时语音转写（可能是碎句、口头禅、半句话）。\n\n"
         + _intent_ladder_block("~150 字")
@@ -296,10 +330,8 @@ def _asr_realtime_prompt_body(
         "- 只有明确问“你的项目/你做过/简历里的 X”时，项目/经历题才讲背景、动作、技术决策、量化结果和复盘；背景交代控制在 1-2 句，重点放在面试官当前追问点，不要先铺一整段项目介绍；\n"
         "- 不输出题型判断过程、检查清单或元话术；section 标题必须服务于本题。\n\n"
         "代码规则：\n"
-        "- 仅当用户明确要求\u201c写代码/实现一下/给 SQL/伪代码\u201d时输出代码；\n"
-        f"- 非 SQL 代码使用 ```{language_lower}，SQL 使用 ```sql；\n"
-        f"- SQL 题优先 SQL，不要强行改成 {language}。\n\n"
-        "输出格式：\n"
+        + code_rules
+        + "输出格式：\n"
         "- 默认使用 `##` 二级标题组织 section；section 内可用短段落或 1) 2) 3)；\n"
         "- 不要使用加粗和分隔线；\n"
         "- 需要代码时允许使用 Markdown 代码块。\n\n"
@@ -310,6 +342,11 @@ def _asr_realtime_prompt_body(
 
 
 def _manual_text_prompt_body(language: str, language_lower: str) -> str:
+    code_fence_line = (
+        f"- 非 SQL 代码使用 ```{language_lower}，SQL 使用 ```sql；\n"
+        if language_lower
+        else "- 需要代码时使用合适的代码块，SQL 使用 ```sql；\n"
+    )
     return (
         "\n场景：本轮输入来自手动文本（通常比实时语音更完整）。\n\n"
         + _FIRST_SENTENCE_CONSTRAINT
@@ -327,8 +364,8 @@ def _manual_text_prompt_body(language: str, language_lower: str) -> str:
         "代码规则：\n"
         "- 算法题、SQL 题、或明确要求实现时，直接给可运行代码；\n"
         "- 非编码题不要强行给代码；\n"
-        f"- 非 SQL 代码使用 ```{language_lower}，SQL 使用 ```sql；\n"
-        "- 给代码时优先覆盖思路、代码、复杂度这些必要内容，但仍用贴合本题的 `##` 标题承载，不要输出固定模板。\n\n"
+        + code_fence_line
+        + "- 给代码时优先覆盖思路、代码、复杂度这些必要内容，但仍用贴合本题的 `##` 标题承载，不要输出固定模板。\n\n"
         "输出格式：\n"
         "- 默认使用 `##` 二级标题组织 section；section 内可用短段落或 1. 2. 3. 编号；\n"
         "- 除标题和代码块外，不要使用加粗和分隔线；\n"
@@ -339,6 +376,12 @@ def _manual_text_prompt_body(language: str, language_lower: str) -> str:
 
 def _server_screen_prompt_body(language: str, language_lower: str, screen_region: str) -> str:
     region_label = _screen_region_label(screen_region)
+    language_line = (
+        f"5. 编程语言优先使用 {language}（SQL 题使用 sql）；\n"
+        if language
+        else "5. 编程语言按题目要求选择（SQL 题使用 sql）；\n"
+    )
+    fence_language = language_lower or "text"
     return (
         "\n场景：本轮输入包含电脑截图，需要先从图中识别题意再回答。\n"
         f"截图区域提示：{region_label}。\n\n"
@@ -346,8 +389,8 @@ def _server_screen_prompt_body(language: str, language_lower: str, screen_region
         "1. 仅依据图中可见信息作答；看不清时明确指出缺失信息，不要编造；\n"
         "2. 若可判断是编程/SQL题，先给主方案完整代码；\n"
         "3. 默认不要给完整备选代码；只有题目要求多解或主方案取舍明显时，再补 1 个备选思路；\n"
-        "4. 保留思路与复杂度分析，并给出关键测试用例；\n"
-        f"5. 编程语言优先使用 {language}（SQL 题使用 sql）；\n"
+        f"4. 保留思路与复杂度分析，并给出关键测试用例；\n"
+        f"{language_line}"
         "6. 输出代码前，先用题目示例或自构的边界用例在脑中走一遍逻辑，确保代码正确；\n"
         "7. 注意边界：空输入、单元素、最大值溢出、负数、重复元素等。\n\n"
         "输出硬约束：\n"
@@ -360,7 +403,7 @@ def _server_screen_prompt_body(language: str, language_lower: str, screen_region
         '- 如果截图无法明确题目：先说明缺失信息，再给\u201c最合理假设下的最小可执行方案\u201d；\n'
         "- 不强制给 LeetCode 难度，只有在能判断时再给。\n\n"
         "代码规则：\n"
-        f"- 非 SQL 代码使用 ```{language_lower}；\n"
+        f"- 非 SQL 代码使用 ```{fence_language}；\n"
         "- SQL 使用 ```sql；\n"
         "- 所有代码必须在代码块中，解释文字必须放在代码块外；\n"
         "- 若有多段代码，必须使用独立代码块。\n"
@@ -640,21 +683,24 @@ def build_system_prompt(
         kb_hits or [],
         excerpt_chars=int(getattr(cfg, "kb_prompt_excerpt_chars", 300) or 300),
     )
-    lang_lower = cfg.language.lower()
+    # 岗位/语言都允许自由填写（非技术岗、语言不限），这里统一归一化后再拼 prompt。
+    language = _normalized_language(cfg.language)
+    lang_lower = language.lower()
+    lang_for_code = lang_lower or "text"
     region = _normalize_screen_region(screen_region or getattr(cfg, "screen_capture_region", "left_half"))
     if mode == PROMPT_MODE_WRITTEN_EXAM:
         prefix = _written_exam_prefix(kb_section)
-        body = _written_exam_prompt_body(cfg.language, lang_lower, region)
+        body = _written_exam_prompt_body(language or "通用", lang_for_code, region)
     elif mode == PROMPT_MODE_SERVER_SCREEN:
-        prefix = _base_prompt_prefix(cfg.position, cfg.language, resume_section, kb_section)
-        body = _server_screen_prompt_body(cfg.language, lang_lower, region)
+        prefix = _base_prompt_prefix(cfg.position, language, resume_section, kb_section)
+        body = _server_screen_prompt_body(language, lang_for_code, region)
     elif mode == PROMPT_MODE_MANUAL_TEXT:
-        prefix = _base_prompt_prefix(cfg.position, cfg.language, resume_section, kb_section)
-        body = _manual_text_prompt_body(cfg.language, lang_lower)
+        prefix = _base_prompt_prefix(cfg.position, language, resume_section, kb_section)
+        body = _manual_text_prompt_body(language, lang_lower)
     else:
-        prefix = _base_prompt_prefix(cfg.position, cfg.language, resume_section, kb_section)
+        prefix = _base_prompt_prefix(cfg.position, language, resume_section, kb_section)
         body = _asr_realtime_prompt_body(
-            cfg.language,
+            language,
             lang_lower,
             high_churn_short_answer=high_churn_short_answer,
         )

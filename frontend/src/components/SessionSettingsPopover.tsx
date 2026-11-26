@@ -43,6 +43,8 @@ export default function SessionSettingsPopover({
   const [editingLang, setEditingLang] = useState(false)
   const [posInput, setPosInput] = useState('')
   const [langInput, setLangInput] = useState('')
+  const [posError, setPosError] = useState('')
+  const [langError, setLangError] = useState('')
 
   useEffect(() => {
     if (!open) return
@@ -70,13 +72,37 @@ export default function SessionSettingsPopover({
     const next = !thinkOn
     await updateConfigAndRefresh({ think_mode: next, think_effort: next ? 'xhigh' : 'off' })
   }
-  const handlePos = async (val: string) => {
+  const savePos = async (val: string) => {
     const v = val.trim()
-    if (v && v !== config?.position) await updateConfigAndRefresh({ position: v })
+    setEditingPos(false)
+    if (!v) return
+    if (v === config?.position) {
+      setPosError('')
+      return
+    }
+    try {
+      await updateConfigAndRefresh({ position: v })
+      setPosError('')
+    } catch (err) {
+      setPosError(err instanceof Error ? err.message : '保存失败，请重试')
+      setEditingPos(true)
+    }
   }
-  const handleLang = async (val: string) => {
+  const saveLang = async (val: string) => {
     const v = val.trim()
-    if (v && v !== config?.language) await updateConfigAndRefresh({ language: v })
+    setEditingLang(false)
+    if (!v) return
+    if (v === config?.language) {
+      setLangError('')
+      return
+    }
+    try {
+      await updateConfigAndRefresh({ language: v })
+      setLangError('')
+    } catch (err) {
+      setLangError(err instanceof Error ? err.message : '保存失败，请重试')
+      setEditingLang(true)
+    }
   }
 
   const tokenByModel = Object.entries(tokenUsage.byModel || {}).map(([name, v]) => [
@@ -181,9 +207,12 @@ export default function SessionSettingsPopover({
                 onChange={(e) => setPosInput(e.target.value)}
                 autoFocus
                 onKeyDown={(e) => {
+                  // 中文输入法按回车是「上屏」：composition 期间不能提交/关闭编辑器，
+                  // 否则会出现「填了自定义岗位但没保存」的问题。
+                  if (e.nativeEvent.isComposing) return
                   if (e.key === 'Enter') {
-                    if (posInput.trim()) void handlePos(posInput.trim())
-                    setEditingPos(false)
+                    if (posInput.trim()) void savePos(posInput.trim())
+                    else setEditingPos(false)
                   }
                   if (e.key === 'Escape') setEditingPos(false)
                 }}
@@ -193,8 +222,8 @@ export default function SessionSettingsPopover({
               <button
                 type="button"
                 onClick={() => {
-                  if (posInput.trim()) void handlePos(posInput.trim())
-                  setEditingPos(false)
+                  if (posInput.trim()) void savePos(posInput.trim())
+                  else setEditingPos(false)
                 }}
                 className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
                 aria-label="确认"
@@ -210,7 +239,7 @@ export default function SessionSettingsPopover({
                   if (e.target.value === '__custom__') {
                     setPosInput('')
                     setEditingPos(true)
-                  } else void handlePos(e.target.value)
+                  } else void savePos(e.target.value)
                 }}
                 className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 focus:outline-none focus:border-accent-blue/60 transition-colors"
               >
@@ -237,6 +266,9 @@ export default function SessionSettingsPopover({
               </button>
             </div>
           )}
+          {posError && (
+            <p className="mt-1 text-[10px] text-red-400">{posError}</p>
+          )}
         </section>
 
         {/* ── 语言 ── */}
@@ -252,20 +284,21 @@ export default function SessionSettingsPopover({
                 onChange={(e) => setLangInput(e.target.value)}
                 autoFocus
                 onKeyDown={(e) => {
+                  if (e.nativeEvent.isComposing) return
                   if (e.key === 'Enter') {
-                    if (langInput.trim()) void handleLang(langInput.trim())
-                    setEditingLang(false)
+                    if (langInput.trim()) void saveLang(langInput.trim())
+                    else setEditingLang(false)
                   }
                   if (e.key === 'Escape') setEditingLang(false)
                 }}
-                placeholder="输入自定义语言"
+                placeholder="输入自定义语言（可填：无）"
                 className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-accent-blue/60 focus:outline-none focus:border-accent-blue"
               />
               <button
                 type="button"
                 onClick={() => {
-                  if (langInput.trim()) void handleLang(langInput.trim())
-                  setEditingLang(false)
+                  if (langInput.trim()) void saveLang(langInput.trim())
+                  else setEditingLang(false)
                 }}
                 className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
                 aria-label="确认"
@@ -281,7 +314,7 @@ export default function SessionSettingsPopover({
                   if (e.target.value === '__custom__') {
                     setLangInput('')
                     setEditingLang(true)
-                  } else void handleLang(e.target.value)
+                  } else void saveLang(e.target.value)
                 }}
                 className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 focus:outline-none focus:border-accent-blue/60 transition-colors"
               >
@@ -290,7 +323,8 @@ export default function SessionSettingsPopover({
                     {l}
                   </option>
                 ))}
-                {config?.language && !(options?.languages ?? []).includes(config.language) && (
+                <option value="无">无（不限）</option>
+                {config?.language && !(options?.languages ?? []).includes(config.language) && config.language !== '无' && (
                   <option value={config.language}>{config.language}</option>
                 )}
                 <option value="__custom__">自定义...</option>
@@ -307,6 +341,9 @@ export default function SessionSettingsPopover({
                 <Pencil className="w-3.5 h-3.5" />
               </button>
             </div>
+          )}
+          {langError && (
+            <p className="mt-1 text-[10px] text-red-400">{langError}</p>
           )}
         </section>
 

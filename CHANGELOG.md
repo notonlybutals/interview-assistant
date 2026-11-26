@@ -29,6 +29,11 @@
 - 启动器改进：优先直接运行 `desktop/node_modules/electron/dist/electron.exe`（绕开 npx 参数解析）；检测到沙箱崩溃（`STATUS_BREAKPOINT`）时自动加 `--no-sandbox` 重试一次；新增 `IA_ELECTRON_NO_SANDBOX=1` 显式开关与 `启动-兼容模式.bat`。
 - FunASR / ModelScope 缓存：`~/.cache/modelscope` 不可写的机器上，`start.py` 自动回退到项目内 `.modelscope-cache/`（可用 `MODELSCOPE_CACHE` 覆盖），避免模型下载报 `WinError 5`。
 
+### 🧭 使用体验修复
+- **自定义岗位 / 语言**：修复中文输入法回车被当成「提交」导致自定义值没保存；后端不再对 `language` 做固定白名单 422（支持「无 / 不限」）；prompt 按实际岗位和语言生成身份描述，不再硬编码「技术面试 / 日常主要使用 X」。会话设置新增「无（不限）」语言选项。
+- **找回窗口**：托盘菜单新增「显示/隐藏悬浮窗（Ctrl+O）」「悬浮窗移到鼠标位置（Ctrl+M）」「在任务栏显示」；隐藏到托盘时首次弹气泡提示（Ctrl+B / 点击托盘图标可找回）。
+- **截图**：托盘菜单的「屏幕共享隐身」改为同时作用于主窗口和悬浮窗，关闭后即可正常截图；窗口偏好（任务栏显示 / 隐身开关）持久化到 `window-prefs.json`。
+
 ## 2026-06-23 - 面试复盘与启动优化
 
 ### 🐛 修复的问题

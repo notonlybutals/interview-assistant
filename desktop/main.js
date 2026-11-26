@@ -121,6 +121,75 @@ let lastOverlayState = {
   maxLines: 0,
 };
 
+// 窗口偏好（任务栏显示 / 屏幕共享隐身）：默认保持隐身，但允许用户在托盘菜单里改，
+// 并持久化到 userData，下次启动沿用。
+let windowPrefs = { showInTaskbar: false, contentProtection: true };
+let trayHintShown = false;
+
+function getWindowPrefsFilePath() {
+  return path.join(app.getPath('userData'), 'window-prefs.json');
+}
+
+function loadWindowPrefs() {
+  try {
+    const raw = fs.readFileSync(getWindowPrefsFilePath(), 'utf8');
+    const data = JSON.parse(raw);
+    if (data && typeof data === 'object') {
+      windowPrefs = {
+        showInTaskbar: data.showInTaskbar === true,
+        contentProtection: data.contentProtection !== false,
+      };
+    }
+  } catch {
+    // 首次启动 / 文件损坏：使用默认值
+  }
+  return windowPrefs;
+}
+
+function saveWindowPrefs() {
+  try {
+    const file = getWindowPrefsFilePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(windowPrefs, null, 2), 'utf8');
+  } catch (error) {
+    console.warn('saveWindowPrefs failed:', error?.message || error);
+  }
+}
+
+function applyContentProtection(enabled) {
+  windowPrefs.contentProtection = Boolean(enabled);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setContentProtection(windowPrefs.contentProtection);
+  }
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.setContentProtection(windowPrefs.contentProtection);
+  }
+  saveWindowPrefs();
+}
+
+function applyShowInTaskbar(enabled) {
+  windowPrefs.showInTaskbar = Boolean(enabled);
+  if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
+    mainWindow.setSkipTaskbar(!windowPrefs.showInTaskbar);
+  }
+  saveWindowPrefs();
+}
+
+function showTrayHintOnce() {
+  if (trayHintShown || !tray) return;
+  trayHintShown = true;
+  try {
+    tray.displayBalloon({
+      title: APP_DISPLAY_NAME,
+      content:
+        '已隐藏到托盘：点击托盘图标或按 Ctrl+B 可找回窗口；右键托盘可关闭「屏幕共享隐身」以便截图。',
+      iconType: 'info',
+    });
+  } catch {
+    // 部分系统不支持托盘气泡，忽略即可
+  }
+}
+
 const OVERLAY_PRESET = { width: 480, height: 320, minWidth: 300, minHeight: 100, resizable: true };
 const PROMPT_OVERLAY_MIN_SIZE = { width: 180, height: 72 };
 const PROMPT_OVERLAY_MAX_SIZE = { heightRatio: 0.48 };
@@ -136,7 +205,7 @@ const FRONT_REASSERT_INTERVAL = 500;
 function applyTopMost(win) {
   if (!win || win.isDestroyed()) return;
   win.setAlwaysOnTop(true, 'screen-saver', FRONT_REASSERT_LEVEL);
-  win.setContentProtection(true);
+  win.setContentProtection(windowPrefs.contentProtection);
   win.moveTop();
 }
 
@@ -409,8 +478,8 @@ function createWindow() {
     show: false,
     resizable: true,
     maximizable: true,
-    // Windows 下不在任务栏显示，只在托盘
-    skipTaskbar: isWindows,
+    // 默认不在任务栏显示（隐身，只在托盘）；可在托盘菜单勾选「在任务栏显示」
+    skipTaskbar: isWindows ? !windowPrefs.showInTaskbar : false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -418,7 +487,7 @@ function createWindow() {
     },
   });
 
-  mainWindow.setContentProtection(true);
+  mainWindow.setContentProtection(windowPrefs.contentProtection);
   const sendMaximizedState = () => {
     mainWindow.webContents.send('window-maximized', mainWindow.isMaximized());
   };
@@ -440,11 +509,12 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Windows 下最小化 = 隐藏到托盘
+  // Windows 下最小化 = 隐藏到托盘；首次隐藏时弹气泡提示怎么找回窗口
   mainWindow.on('minimize', (e) => {
     if (process.platform === 'win32') {
       e.preventDefault();
       mainWindow.hide();
+      showTrayHintOnce();
     }
   });
 
@@ -494,7 +564,7 @@ function createOverlayWindow() {
 
   // Content protection 必须尽早调用 —— 等到 ready-to-show 时,
   // 窗口可能已经被 window server 登记过一次, 导致 NSWindowSharingNone 漏掉初始帧
-  overlayWindow.setContentProtection(true);
+  overlayWindow.setContentProtection(windowPrefs.contentProtection);
   overlayWindow.setBackgroundColor('#00000000');
   overlayWindow.setAlwaysOnTop(true, 'screen-saver', FRONT_REASSERT_LEVEL);
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
@@ -510,7 +580,7 @@ function createOverlayWindow() {
 
   overlayWindow.once('ready-to-show', () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    overlayWindow.setContentProtection(true);
+    overlayWindow.setContentProtection(windowPrefs.contentProtection);
     overlayWindow.setBackgroundColor('#00000000');
     overlayWindow.setFocusable(false);
     overlayWindow.setAlwaysOnTop(true, 'screen-saver', FRONT_REASSERT_LEVEL);
@@ -518,7 +588,7 @@ function createOverlayWindow() {
   overlayWindow.loadURL(`${SERVER_URL}?overlay=1`);
   overlayWindow.webContents.on('did-finish-load', () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    overlayWindow.setContentProtection(true);
+    overlayWindow.setContentProtection(windowPrefs.contentProtection);
     overlayWindow.setBackgroundColor('#00000000');
     overlayWindow.setFocusable(false);
     if (lastOverlayState) {
@@ -534,7 +604,7 @@ function createOverlayWindow() {
   });
   overlayWindow.on('show', () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
-    overlayWindow.setContentProtection(true);
+    overlayWindow.setContentProtection(windowPrefs.contentProtection);
     overlayWindow.setBackgroundColor('#00000000');
     overlayWindow.setFocusable(false);
   });
@@ -593,7 +663,7 @@ function showOverlayWindow() {
   } else {
     overlayWindow.show();
   }
-  overlayWindow.setContentProtection(true);
+  overlayWindow.setContentProtection(windowPrefs.contentProtection);
   keepWindowInFront(overlayWindow);
 }
 
@@ -601,6 +671,7 @@ function toggleWindow() {
   if (!mainWindow) return;
   if (mainWindow.isVisible()) {
     mainWindow.hide();
+    showTrayHintOnce();
   } else {
     mainWindow.show();
     mainWindow.focus();
@@ -722,6 +793,21 @@ function createTray() {
     { label: '隐藏到托盘', click: () => toggleWindow() },
     { type: 'separator' },
     {
+      label: '显示/隐藏悬浮窗（Ctrl+O）',
+      click: () => shortcutCallbacks.toggleInterviewOverlay(),
+    },
+    {
+      label: '悬浮窗移到鼠标位置（Ctrl+M）',
+      click: () => shortcutCallbacks.moveOverlayToMouse(),
+    },
+    { type: 'separator' },
+    {
+      label: '在任务栏显示',
+      type: 'checkbox',
+      checked: Boolean(windowPrefs.showInTaskbar),
+      click: (menuItem) => applyShowInTaskbar(menuItem.checked),
+    },
+    {
       label: '窗口置顶',
       type: 'checkbox',
       checked: false,
@@ -730,12 +816,10 @@ function createTray() {
       },
     },
     {
-      label: '屏幕共享隐身',
+      label: '屏幕共享隐身（关闭后可截图）',
       type: 'checkbox',
-      checked: true,
-      click: (menuItem) => {
-        mainWindow?.setContentProtection(menuItem.checked);
-      },
+      checked: Boolean(windowPrefs.contentProtection),
+      click: (menuItem) => applyContentProtection(menuItem.checked),
     },
     { type: 'separator' },
     { label: '退出', click: () => { isQuitting = true; app.quit(); } },
@@ -1336,6 +1420,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  loadWindowPrefs();
   createWindow();
   createTray();
   registerShortcuts();
