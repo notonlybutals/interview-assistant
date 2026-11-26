@@ -865,8 +865,10 @@ function createTray() {
     let icon = null;
     const icoPath = path.join(__dirname, 'build', 'icon.ico');
     const pngPath = path.join(__dirname, 'icon.png');
-    if (process.platform === 'win32' && fs.existsSync(icoPath)) {
-      icon = nativeImage.createFromPath(icoPath);
+    // 优先用 16x16 PNG：部分 Windows 11 机器上大尺寸 ICO 会被托盘静默吞掉。
+    if (fs.existsSync(pngPath)) {
+      icon = nativeImage.createFromPath(pngPath);
+      if (icon && !icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 });
     }
     if (!icon || icon.isEmpty()) {
       icon = nativeImage.createFromPath(pngPath);
@@ -1165,6 +1167,7 @@ const shortcutCallbacks = {
       // 快捷键关闭 overlay：直接销毁窗口而不是 hide()。
       // Windows 上透明/置顶窗口 hide→show 会留下残影、且鼠标事件可能失效；
       // 销毁重建后拖动/缩放/渲染都是干净的（位置/尺寸已持久化，重开会恢复）。
+      appendOverlayDebug('toggle close');
       if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow._pendingShow = false;
         overlayWindow.destroy();
@@ -1292,6 +1295,7 @@ ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
   return { ok: true };
 });
 ipcMain.handle('overlay-hide', () => {
+  appendOverlayDebug('overlay-hide ipc');
   const nextState = {
     ...lastOverlayState,
     initialized: true,
