@@ -91,6 +91,7 @@ def build_config_payload(cfg) -> dict:
             0.0,
             min(3.0, float(getattr(cfg, "assist_asr_late_constraint_grace_sec", 0.35) or 0.0)),
         ),
+        "assist_asr_question_relaxed": bool(getattr(cfg, "assist_asr_question_relaxed", True)),
         "assist_asr_context_chars": max(
             0, min(2000, int(getattr(cfg, "assist_asr_context_chars", 600) or 0))
         ),

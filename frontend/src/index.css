@@ -1196,12 +1196,11 @@ code, pre, .font-mono {
   opacity: 0;
   transition: opacity 200ms ease;
   pointer-events: auto;
-  cursor: grab;
+  /* 原生拖动区：比 JS 指针方案更可靠，隐藏/显示、失去焦点后仍然有效 */
+  -webkit-app-region: drag;
+  cursor: move;
   touch-action: none;
   z-index: 20;
-}
-.ov-grip:active {
-  cursor: grabbing;
 }
 .ov-grip::after {
   content: '';
@@ -1218,17 +1217,18 @@ code, pre, .font-mono {
   opacity: 1;
 }
 
-/* 右下角拖拽缩放把手（仅在「悬浮窗允许鼠标调整」开启时渲染） */
+/* 右下角拖拽缩放把手（仅在「悬浮窗允许鼠标调整」开启时渲染）。
+ * 用 position: fixed 贴住窗口视口右下角，避免窗口缩到很小时被内容裁掉。 */
 .ov-resize-handle {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 20px;
-  height: 20px;
+  position: fixed;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
   cursor: nwse-resize;
   pointer-events: auto;
   touch-action: none;
-  z-index: 21;
+  z-index: 2147483000;
 }
 .ov-resize-handle::after {
   content: '';

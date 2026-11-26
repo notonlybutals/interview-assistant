@@ -171,6 +171,13 @@ function applyContentProtection(enabled) {
 function applyShowInTaskbar(enabled) {
   windowPrefs.showInTaskbar = Boolean(enabled);
   if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
+    // 托盘没建起来时不允许把任务栏也关掉，否则窗口会彻底消失、只能靠快捷键找回。
+    if (!windowPrefs.showInTaskbar && !tray) {
+      windowPrefs.showInTaskbar = true;
+      mainWindow.setSkipTaskbar(false);
+      saveWindowPrefs();
+      return;
+    }
     mainWindow.setSkipTaskbar(!windowPrefs.showInTaskbar);
   }
   saveWindowPrefs();
@@ -804,6 +811,15 @@ async function addMultiServerScreenShot() {
   }
 }
 
+function appendTrayLog(message) {
+  try {
+    const file = path.join(app.getPath('userData'), 'tray.log');
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
+  } catch {
+    /* ignore */
+  }
+}
+
 function createTray() {
   try {
     let icon = null;
@@ -818,11 +834,13 @@ function createTray() {
     }
     if (!icon || icon.isEmpty()) {
       console.warn('createTray: icon assets empty, using generated icon');
+      appendTrayLog('icon assets empty, using generated icon');
       icon = createTrayIcon();
     }
 
     tray = new Tray(icon);
     tray.setToolTip(APP_DISPLAY_NAME);
+    appendTrayLog(`tray created size=${JSON.stringify(icon.getSize())}`);
 
     const contextMenu = Menu.buildFromTemplate([
       { label: '显示窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
@@ -868,6 +886,7 @@ function createTray() {
   } catch (error) {
     // 托盘创建失败时退回任务栏显示，保证用户永远找得到窗口。
     console.warn('createTray failed, fall back to taskbar:', error?.message || error);
+    appendTrayLog(`tray create failed: ${error?.message || error}`);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setSkipTaskbar(false);
     }
@@ -1095,11 +1114,15 @@ const shortcutCallbacks = {
       createOverlayWindow();
       showOverlayWindow();
     } else {
-      // 快捷键仅切换 overlay 可见性, 主窗口保持原状 (用户可通过 Cmd+B 或托盘唤回).
-      // 只有 ControlBar 的 "结束面试" 按钮会走 sync-overlay-window IPC 恢复主窗口.
+      // 快捷键仅切换 overlay 可见性；如果主窗口是被 overlay 自动隐藏的，关闭 overlay 时把它还回来。
       if (overlayWindow && !overlayWindow.isDestroyed()) {
         overlayWindow._pendingShow = false;
         overlayWindow.hide();
+      }
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
+        mainWindow._hiddenByOverlay = false;
+        mainWindow.show();
+        mainWindow.focus();
       }
     }
   },
@@ -1205,8 +1228,8 @@ ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
     y: bounds.y + Math.round(bounds.height / 2),
   });
   const work = display.workArea;
-  const nextWidth = Math.max(180, Math.min(work.width, bounds.width + stepW));
-  const nextHeight = Math.max(72, Math.min(work.height, bounds.height + stepH));
+  const nextWidth = Math.max(240, Math.min(work.width, bounds.width + stepW));
+  const nextHeight = Math.max(100, Math.min(work.height, bounds.height + stepH));
   overlayWindow.setBounds({
     x: bounds.x,
     y: bounds.y,
@@ -1478,6 +1501,15 @@ app.whenReady().then(async () => {
     app.setName(APP_DISPLAY_NAME);
   } catch {
     /* 个别平台/版本可能不支持 */
+  }
+  if (process.platform === 'win32') {
+    // 显式 AppUserModelID：Windows 托盘/通知/任务栏分组都依赖它，
+    // 缺失时偶发「托盘里看不到图标」。
+    try {
+      app.setAppUserModelId('com.interviewassistant.desktop');
+    } catch {
+      /* ignore */
+    }
   }
   createAppMenu();
   if (app.isPackaged) {

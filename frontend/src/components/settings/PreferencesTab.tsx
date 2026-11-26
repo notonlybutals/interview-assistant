@@ -315,6 +315,35 @@ export default function PreferencesTab({ variant = 'main' }: { variant?: 'main' 
             当前：{config?.assist_high_churn_short_answer ? '简短回答' : '详细回答'}
           </p>
         </Field>
+        <Field label="问句判定" hint="宽松=宁多答不漏答（长陈述句也提交）；严格=只答命中问句线索的句子">
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { value: true, label: '宽松（推荐）', hint: '宁多答，不漏答' },
+              { value: false, label: '严格', hint: '只答问句线索' },
+            ]).map((item) => {
+              const selected = (config?.assist_asr_question_relaxed ?? true) === item.value
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={async () => {
+                    await autoSave.saveNow({ assist_asr_question_relaxed: item.value })
+                  }}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
+                    selected
+                      ? 'border-accent-blue bg-accent-blue/10 ring-1 ring-accent-blue/30'
+                      : 'border-bg-hover bg-bg-tertiary/25 hover:border-bg-hover'
+                  }`}
+                >
+                  <span className={`text-xs font-semibold ${selected ? 'text-accent-blue' : 'text-text-primary'}`}>
+                    {item.label}
+                  </span>
+                  <span className="block text-[10px] text-text-muted mt-1">{item.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+        </Field>
         <Field label="生成时滚动" hint="默认固定在答案开头，按阅读顺序看；需要跟最新内容时可切到跟随">
           <div className="grid grid-cols-2 gap-2">
             {([
