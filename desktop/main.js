@@ -78,7 +78,18 @@ function loadAppDisplayName() {
 
 const APP_DISPLAY_NAME = loadAppDisplayName();
 
-const ROOT = app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
+// Windows 托盘/通知/任务栏分组依赖 AppUserModelID；必须在 app ready 之前设置，
+// 放到 whenReady 里再设会导致已注册的托盘图标 AUMID 不一致而偶发「图标看不见」。
+if (process.platform === 'win32') {
+  try {
+    app.setAppUserModelId('com.interviewassistant.desktop');
+  } catch {
+    /* ignore */
+  }
+}
+
+// 打包后（electron-builder）资源在 resources/runtime 下；开发态仍是仓库根目录。
+const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.resolve(__dirname, '..');
 let PORT = parseInt(process.env.PORT || '18080', 10);
 let SERVER_URL = `http://127.0.0.1:${PORT}`;
 if (app.isPackaged) {
@@ -1595,15 +1606,6 @@ app.whenReady().then(async () => {
     app.setName(APP_DISPLAY_NAME);
   } catch {
     /* 个别平台/版本可能不支持 */
-  }
-  if (process.platform === 'win32') {
-    // 显式 AppUserModelID：Windows 托盘/通知/任务栏分组都依赖它，
-    // 缺失时偶发「托盘里看不到图标」。
-    try {
-      app.setAppUserModelId('com.interviewassistant.desktop');
-    } catch {
-      /* ignore */
-    }
   }
   createAppMenu();
   if (app.isPackaged) {
