@@ -583,6 +583,7 @@ function createOverlayWindow() {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     return overlayWindow;
   }
+  appendOverlayDebug('createOverlayWindow start');
 
   const initialMode = lastOverlayState?.mode || (lastOverlayState?.showBg === false ? 'prompt' : 'glass');
   const initialBounds = initialMode === 'focus' ? getFocusOverlayBounds() : getNormalOverlayBounds(initialMode);
@@ -617,6 +618,7 @@ function createOverlayWindow() {
     },
   });
 
+  const createdOverlayWindow = overlayWindow;
   // Content protection 必须尽早调用 —— 等到 ready-to-show 时,
   // 窗口可能已经被 window server 登记过一次, 导致 NSWindowSharingNone 漏掉初始帧
   overlayWindow.setContentProtection(windowPrefs.contentProtection);
@@ -665,6 +667,9 @@ function createOverlayWindow() {
   });
 
   overlayWindow.on('closed', () => {
+    // destroy() 的 closed 事件可能晚于「新建 overlay」到达；只清理自己这一代，
+    // 否则会把刚创建的新窗口引用置空，导致下一次 Ctrl+O 打开/关闭错乱。
+    if (overlayWindow !== createdOverlayWindow) return;
     overlayWindow = null;
     _overlayDragging = false;
     if (_blurTimer) { clearTimeout(_blurTimer); _blurTimer = null; }
@@ -682,6 +687,7 @@ function createOverlayWindow() {
     }, 150);
   });
 
+  appendOverlayDebug('createOverlayWindow ok');
   return overlayWindow;
 }
 
@@ -701,7 +707,11 @@ function sendShortcutsState() {
 }
 
 function showOverlayWindow() {
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    appendOverlayDebug('showOverlayWindow skip: no window');
+    return;
+  }
+  appendOverlayDebug(`showOverlayWindow visible=${Boolean(lastOverlayState?.visible)} ready=${Boolean(overlayWindow._overlayReady)}`);
   if (!lastOverlayState?.visible) {
     overlayWindow._pendingShow = false;
     overlayWindow.hide();
@@ -835,6 +845,16 @@ function appendTrayLog(message) {
   try {
     const file = path.join(app.getPath('userData'), 'tray.log');
     fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
+  } catch {
+    /* ignore */
+  }
+}
+
+function appendOverlayDebug(message) {
+  try {
+    const dir = path.join(ROOT, 'log');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(path.join(dir, 'overlay-debug.log'), `[${new Date().toISOString()}] ${message}\n`, 'utf8');
   } catch {
     /* ignore */
   }
@@ -1130,8 +1150,17 @@ const shortcutCallbacks = {
         mainWindow._hiddenByOverlay = true;
         mainWindow.hide();
       }
-      createOverlayWindow();
-      showOverlayWindow();
+      try {
+        createOverlayWindow();
+        showOverlayWindow();
+      } catch (error) {
+        appendOverlayDebug(`toggle open failed: ${error?.stack || error}`);
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow._hiddenByOverlay) {
+          mainWindow._hiddenByOverlay = false;
+          mainWindow.show();
+        }
+        notifyDesktopToast(`悬浮窗打开失败：${error?.message || error}`, 'error');
+      }
     } else {
       // 快捷键关闭 overlay：直接销毁窗口而不是 hide()。
       // Windows 上透明/置顶窗口 hide→show 会留下残影、且鼠标事件可能失效；
