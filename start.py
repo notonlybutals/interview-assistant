@@ -85,6 +85,34 @@ def _hidden_process_kwargs() -> dict:
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
 
 
+def _electron_no_sandbox_requested() -> bool:
+    """IA_ELECTRON_NO_SANDBOX=1 时给 Electron 加 --no-sandbox（兼容沙箱崩溃的 Windows 机器）。"""
+    return os.environ.get("IA_ELECTRON_NO_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Chromium 沙箱初始化失败时 Windows 以 STATUS_BREAKPOINT(0x80000003) 退出，
+# Python 里可能是无符号 2147483651，也可能是负数 -2147483645。
+_ELECTRON_SANDBOX_CRASH_CODES = (2147483651, -2147483645)
+
+
+def _electron_command(npx: Optional[str]) -> list[str]:
+    """优先直接运行 electron 可执行文件，找不到时再退回 npx。
+
+    直接跑 `node_modules/electron/dist/electron.exe` 可以绕开 npx 的参数解析，
+    启动也更快；某些机器上 `npx electron --no-sandbox .` 里的参数不一定能透传。
+    """
+    is_win = platform.system() == "Windows"
+    if is_win:
+        exe = os.path.join(DESKTOP_DIR, "node_modules", "electron", "dist", "electron.exe")
+        if os.path.isfile(exe):
+            return [exe]
+    bin_name = "electron.cmd" if is_win else "electron"
+    bin_path = os.path.join(DESKTOP_DIR, "node_modules", ".bin", bin_name)
+    if os.path.isfile(bin_path):
+        return [bin_path]
+    return [npx or "npx", "electron"]
+
+
 def get_local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -432,7 +460,24 @@ def run_desktop_mode(port: int):
 
     # 到这里说明已经是无窗口模式了（或者不是 Windows）
     env = {**os.environ, "PORT": str(port), HIDE_CONSOLE_ENV: "1"}
-    proc = subprocess.run([npx, "electron", "."], cwd=DESKTOP_DIR, env=env, **_hidden_process_kwargs())
+    command = _electron_command(npx)
+    # 少数 Windows 机器（安全软件注入 / 系统策略）会让 Chromium 沙箱初始化即崩溃：
+    # 进程以 0x80000003（STATUS_BREAKPOINT）退出且没有任何输出。设置
+    # IA_ELECTRON_NO_SANDBOX=1 可跳过 Chromium 沙箱（仅本机应用，内容全部本地加载）。
+    no_sandbox = _electron_no_sandbox_requested()
+
+    def _spawn(use_no_sandbox: bool):
+        args = [*command]
+        if use_no_sandbox:
+            args.append("--no-sandbox")
+        args.append(".")
+        return subprocess.run(args, cwd=DESKTOP_DIR, env=env, **_hidden_process_kwargs())
+
+    proc = _spawn(no_sandbox)
+    if proc.returncode in _ELECTRON_SANDBOX_CRASH_CODES and not no_sandbox:
+        # 沙箱初始化失败自动降级重试一次：本应用只加载本地前端和本机后端，风险可控。
+        print("[WARN] Electron 沙箱初始化失败（STATUS_BREAKPOINT），改用 --no-sandbox 重试…", flush=True)
+        proc = _spawn(True)
     sys.exit(proc.returncode)
 
 
@@ -478,6 +523,17 @@ def main():
     print(f"  Python: {sys.version.split()[0]}  ({sys.executable})")
     print(f"  平台: {platform.system()} {platform.machine()}")
     print()
+
+    # FunASR / ModelScope 默认把模型缓存到 ~/.cache/modelscope；少数 Windows 机器上
+    # 该目录不可写（安全软件/系统策略，报 WinError 5），导致模型下载/加载失败。
+    # 未显式配置时退回到项目内的缓存目录（可用 MODELSCOPE_CACHE 覆盖）。
+    if not os.environ.get("MODELSCOPE_CACHE", "").strip():
+        fallback_cache = os.path.join(ROOT, ".modelscope-cache")
+        try:
+            os.makedirs(fallback_cache, exist_ok=True)
+            os.environ["MODELSCOPE_CACHE"] = fallback_cache
+        except OSError:
+            pass
 
     # Ensure Python deps (auto-install if missing)
     if not args.skip_dep_check:

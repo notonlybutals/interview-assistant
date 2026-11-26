@@ -119,3 +119,54 @@ def test_app_ready_accepts_any_http_response(monkeypatch):
     monkeypatch.setattr(start.urllib.request, "urlopen", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
     assert start._app_ready(18080) is False
 
+
+def test_electron_no_sandbox_flag_from_env(monkeypatch):
+    start = load_start()
+    monkeypatch.setattr(start.os, "environ", {})
+    assert start._electron_no_sandbox_requested() is False
+    monkeypatch.setattr(start.os, "environ", {"IA_ELECTRON_NO_SANDBOX": "1"})
+    assert start._electron_no_sandbox_requested() is True
+
+
+def test_electron_command_prefers_bundled_exe(monkeypatch, tmp_path):
+    start = load_start()
+    exe = tmp_path / "node_modules" / "electron" / "dist" / "electron.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    monkeypatch.setattr(start, "DESKTOP_DIR", str(tmp_path))
+    monkeypatch.setattr(start.platform, "system", lambda: "Windows")
+    assert start._electron_command("npx") == [str(exe)]
+
+
+def test_desktop_run_retries_with_no_sandbox_on_sandbox_crash(monkeypatch, tmp_path):
+    start = load_start()
+    monkeypatch.setattr(start.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(start, "HIDE_CONSOLE_ENV", "IA_HIDE_CONSOLE")
+    monkeypatch.setattr(start.os, "environ", {"IA_HIDE_CONSOLE": "1"})
+    monkeypatch.setattr(start, "DESKTOP_DIR", str(tmp_path))
+    monkeypatch.setattr(start, "ensure_electron", lambda: True)
+    monkeypatch.setattr(start, "kill_port", lambda _port: None)
+    monkeypatch.setattr(start, "_find_npx", lambda: "npx")
+    monkeypatch.setattr(start, "_electron_command", lambda _npx: ["electron"])
+    calls = []
+
+    class _Result:
+        def __init__(self, rc):
+            self.returncode = rc
+
+    def _fake_run(args, **_kwargs):
+        calls.append(list(args))
+        # 第一次模拟 Chromium 沙箱初始化失败（STATUS_BREAKPOINT），重试后成功
+        return _Result(2147483651) if len(calls) == 1 else _Result(0)
+
+    monkeypatch.setattr(start.subprocess, "run", _fake_run)
+
+    with pytest.raises(SystemExit) as ei:
+        start.run_desktop_mode(18080)
+    assert ei.value.code == 0
+    assert len(calls) == 2
+    assert "--no-sandbox" not in calls[0]
+    assert "--no-sandbox" in calls[1]
+    assert calls[1][-1] == "."
+
+

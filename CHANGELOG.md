@@ -24,6 +24,11 @@
 - 新增 `backend/tests/test_asr_latency_optimizations.py`；后端全量 `613 passed, 3 skipped`；ruff 通过。
 - 详细原理、CoverDrive 对比与调参建议见 [docs/性能优化-CoverDrive借鉴.md](docs/性能优化-CoverDrive借鉴.md)。
 
+### 🖥 桌面启动兼容（Windows）
+- 部分 Windows 机器上安全软件/系统策略会让 Chromium 沙箱初始化直接崩溃（进程以 `0x80000003` 退出、日志无任何 Electron 输出），表现为双击后只弹「桌面应用启动失败」。
+- 启动器改进：优先直接运行 `desktop/node_modules/electron/dist/electron.exe`（绕开 npx 参数解析）；检测到沙箱崩溃（`STATUS_BREAKPOINT`）时自动加 `--no-sandbox` 重试一次；新增 `IA_ELECTRON_NO_SANDBOX=1` 显式开关与 `启动-兼容模式.bat`。
+- FunASR / ModelScope 缓存：`~/.cache/modelscope` 不可写的机器上，`start.py` 自动回退到项目内 `.modelscope-cache/`（可用 `MODELSCOPE_CACHE` 覆盖），避免模型下载报 `WinError 5`。
+
 ## 2026-06-23 - 面试复盘与启动优化
 
 ### 🐛 修复的问题

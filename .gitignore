@@ -108,3 +108,6 @@ desktop/.cache/
 
 # pytest 临时目录（tmpdir 前缀）
 pytest-of-*/
+
+# FunASR/ModelScope 本地模型缓存回退目录（~/.cache 不可写时使用）
+.modelscope-cache/
