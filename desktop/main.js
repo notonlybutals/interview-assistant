@@ -92,11 +92,9 @@ if (process.platform === 'win32') {
 const ROOT = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.resolve(__dirname, '..');
 let PORT = parseInt(process.env.PORT || '18080', 10);
 let SERVER_URL = `http://127.0.0.1:${PORT}`;
-if (app.isPackaged) {
-  const userDir = process.env.IA_USER_DATA_DIR || path.join(app.getPath('appData'), 'InterviewAssistant');
-  fs.mkdirSync(userDir, { recursive: true });
-  app.setPath('userData', userDir);
-}
+// 注意：不要在这里 app.setPath('userData', ...)。Chromium 的单实例锁在很早期创建，
+// 强制改 userData 到 %APPDATA%\InterviewAssistant 会让锁文件创建失败（Error code: 5），
+// 进程直接退出（安装版双击无反应）。沿用默认 userData（%APPDATA%/<package name>）即可。
 const hasInstanceLock = !app.isPackaged || app.requestSingleInstanceLock();
 if (!hasInstanceLock) app.quit();
 app.on('second-instance', () => {
