@@ -674,13 +674,23 @@ class AudioCapture:
 # ---------------------------------------------------------------------------
 
 class VADBuffer:
-    """Voice Activity Detection: accumulate speech, trigger after silence."""
+    """Voice Activity Detection: accumulate speech, trigger after silence.
+
+    能量门限默认自适应底噪（参考 CoverDrive Silero/WebRTC 端点的双门限设计）：
+    门限 = max(silence_threshold, 噪声底 × 10^(margin_db/20))，噪声底只跟踪
+    「不够响」的帧（静音/底噪/远处声），本人语音不参与，避免门限被自己抬高。
+    开口后再把门限打 active_threshold_ratio 折，避免轻声句尾被吃成静音。
+    """
 
     def __init__(self, sample_rate: int = 16000, silence_threshold: float = 0.01,
                  silence_duration: float = 2.5, min_speech_duration: float = 0.5,
                  max_speech_duration: Optional[float] = None,
                  preroll_duration: float = 0.0,
-                 rollover_duration: float = 0.0):
+                 rollover_duration: float = 0.0,
+                 adaptive_threshold: bool = True,
+                 noise_margin_db: float = 6.0,
+                 active_threshold_ratio: float = 0.65,
+                 noise_floor_max: float = 0.02):
         self.sample_rate = sample_rate
         self.silence_threshold = silence_threshold
         self.silence_duration = silence_duration
@@ -692,6 +702,13 @@ class VADBuffer:
         )
         self.preroll_duration = max(0.0, float(preroll_duration or 0.0))
         self.rollover_duration = max(0.0, float(rollover_duration or 0.0))
+        self.adaptive_threshold = bool(adaptive_threshold)
+        self.noise_margin_ratio = 10.0 ** (float(noise_margin_db or 0.0) / 20.0)
+        self.active_threshold_ratio = max(0.1, min(1.0, float(active_threshold_ratio or 0.65)))
+        self.noise_floor_max = max(0.0, float(noise_floor_max or 0.02))
+        # 噪声底跨段保留（不随 _reset 清零）：环境底噪是设备/房间属性，不是单段状态。
+        self._noise_floor: Optional[float] = None
+        self._noise_alpha = 0.05
         self._buffer: list[np.ndarray] = []
         self._preroll: list[np.ndarray] = []
         self._speech_started = False
@@ -705,6 +722,37 @@ class VADBuffer:
         self._last_flush_reason: Optional[str] = None
         self._last_segment_started_at: Optional[float] = None
         self._last_segment_ended_at: Optional[float] = None
+
+    def _base_gate(self) -> float:
+        gate = self.silence_threshold
+        if self.adaptive_threshold and self._noise_floor is not None:
+            gate = max(gate, self._noise_floor * self.noise_margin_ratio)
+        return gate
+
+    def _update_noise_floor(self, rms: float, base_gate: float) -> None:
+        if not self.adaptive_threshold:
+            return
+        # 开口期间冻结底噪：否则轻声句尾会被当成底噪慢慢写进噪声底，
+        # 门限逐渐抬高，最后把句尾吃成静音（实测会把"擦除"这类尾词切掉）。
+        if self._speech_started:
+            return
+        # 只有「不够响」的帧参与底噪统计；本人语音（响）不参与，避免门限自我抬高。
+        if rms > base_gate:
+            return
+        capped = min(max(rms, 0.0), self.noise_floor_max)
+        if self._noise_floor is None:
+            self._noise_floor = capped
+        else:
+            self._noise_floor += self._noise_alpha * (capped - self._noise_floor)
+
+    def current_threshold(self) -> float:
+        """当前生效的能量门限（用于日志/调试）。"""
+        base = self._base_gate()
+        return base * self.active_threshold_ratio if self._speech_started else base
+
+    def noise_floor(self) -> Optional[float]:
+        return self._noise_floor
+
 
     def _append_preroll(self, audio: np.ndarray) -> None:
         if self._preroll_max_samples <= 0 or len(audio) <= 0:
@@ -754,7 +802,10 @@ class VADBuffer:
     def feed(self, audio: np.ndarray) -> Optional[np.ndarray]:
         energy = float(np.sqrt(np.mean(audio ** 2)))
         now = time.time()
-        if energy > self.silence_threshold:
+        base_gate = self._base_gate()
+        self._update_noise_floor(energy, base_gate)
+        gate = base_gate * self.active_threshold_ratio if self._speech_started else base_gate
+        if energy > gate:
             if not self._speech_started:
                 self._speech_started = True
                 preroll_chunks = self._consume_preroll()

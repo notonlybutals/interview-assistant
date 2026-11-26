@@ -477,7 +477,11 @@ def postprocess_answer_for_mode(text: str, mode: str) -> str:
 class AnswerStreamSanitizer:
     """Small streaming cleaner for text chunks before they hit the UI."""
 
-    _TAIL_KEEP = 64
+    # 稳定后再上屏的尾部缓冲：够识别跨 chunk 的 markdown/隐藏块即可，越小首字越快。
+    # （原来是 64 字符，中文回答下等于首字白等 1~2 秒。）
+    _TAIL_KEEP = 24
+    # 首次上屏前再多留一点：要能完整看到并剥掉「这是一个面试问题。」这类元开场白。
+    _FIRST_EMIT_MIN = 48
 
     def __init__(self, mode: str):
         self.mode = mode
@@ -491,13 +495,37 @@ class AnswerStreamSanitizer:
         if not chunk:
             return ""
         self._buffer += chunk
+        if not self._started:
+            emit_len = self._first_emit_len()
+            if emit_len <= 0:
+                return ""
+            emit, self._buffer = self._buffer[:emit_len], self._buffer[emit_len:]
+            return self._clean_emit(emit)
         if len(self._buffer) <= self._TAIL_KEEP:
             return ""
-        emit_len = self._safe_emit_len()
+        emit_len = self._safe_emit_len(self._TAIL_KEEP)
         if emit_len <= 0:
             return ""
         emit, self._buffer = self._buffer[:emit_len], self._buffer[emit_len:]
         return self._clean_emit(emit)
+
+    def _first_emit_len(self) -> int:
+        """首次上屏长度：优先切在句末/换行，实在没有再按安全窗口切。
+
+        同时兼顾两点：①「这是一个面试问题。」这类元开场白要先完整看到才能剥掉；
+        ②中文流式回答不要为了等 64 字符尾巴把首字拖 1~2 秒。
+        """
+        buf = self._buffer
+        if len(buf) <= self._FIRST_EMIT_MIN:
+            return 0
+        start = self._FIRST_EMIT_MIN - 1
+        limit = min(len(buf), self._FIRST_EMIT_MIN + 96)
+        for j in range(start, limit):
+            if buf[j] in "\n。！？!?；;":
+                return j + 1
+        if len(buf) > self._FIRST_EMIT_MIN + self._TAIL_KEEP:
+            return len(buf) - self._TAIL_KEEP
+        return 0
 
     def finish(self) -> str:
         tail, self._buffer = self._buffer, ""
@@ -518,8 +546,8 @@ class AnswerStreamSanitizer:
             self._started = True
         return text
 
-    def _safe_emit_len(self) -> int:
-        base = max(0, len(self._buffer) - self._TAIL_KEEP)
+    def _safe_emit_len(self, tail_keep: int) -> int:
+        base = max(0, len(self._buffer) - tail_keep)
         if base <= 0:
             return 0
         lower = self._buffer.lower()

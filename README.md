@@ -270,6 +270,7 @@ interview-assistant/
 - **Whisper 模型下载慢**：可设置 `export HF_ENDPOINT=https://hf-mirror.com`。
 - **中文/术语识别不准（如 RAG 被听错）**：主链路切到 FunASR 并下载模型，配合设置 → 热词里的岗位自定义词；Whisper 用户也可在热词页配置提示偏置。
 - **转写时风扇狂转**：设置 → 节奏 → 性能，调低「本地 ASR 推理线程数」（默认自动 = min(8, 核数-2)）。
+- **首答太慢 / 断句切半句**：见 [性能优化-CoverDrive借鉴](docs/性能优化-CoverDrive借鉴.md)，可调 `silence_duration`、`assist_asr_confirm_window_sec`、`assist_asr_fast_confirm_sec` 等（`backend/config.json`）。
 - **端口冲突**：可改用 `python start.py --port 9090`。
 
 ## 开源协议与免责

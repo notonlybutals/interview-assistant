@@ -942,12 +942,17 @@ def process_question_parallel(
         display_question = f"{question_text} [📷 多图 x{len(images)}]"
     else:
         display_question = question_text + (" [📷 附图]" if images else "")
+    # 延迟账本：asr_flush_mono 由 asr_state 在确认问句时写入，用它把
+    # 「确认问句 → 派发 → 开始生成」这一段等待量化出来。
+    _now_mono = time.monotonic()
+    _asr_flush_mono = float(meta.get("asr_flush_mono", 0.0) or 0.0)
     deps.logger.info(
-        "ANSWER_START id=%s model=%s source=%s followup=%s q=%r",
+        "ANSWER_START id=%s model=%s source=%s followup=%s enqueue_to_start_ms=%.0f q=%r",
         qa_id,
         model_cfg.name,
         source,
         is_followup,
+        max(0.0, (_now_mono - _asr_flush_mono) * 1000.0) if _asr_flush_mono else -1.0,
         question_text[:120],
     )
     _broadcast(
@@ -1008,7 +1013,10 @@ def process_question_parallel(
     # may arrive seconds before any usable code/answer text.
     first_token_mono: Optional[float] = None
     chunk_buffer: list[str] = []
-    batch_size = 5
+    # 首字优先：第一个清洗后的 chunk 立刻上屏，后续再按小批合并。
+    # 原来统一攒 5 个 chunk 才广播，首字观感会白等 4~5 个 token 的时间。
+    first_chunk_sent = False
+    batch_size = 4
     try:
         # Precedence: one-shot meta override > written-exam screen think > model/global.
         if "override_think_mode" in meta and meta.get("override_think_mode") is not None:
@@ -1059,11 +1067,12 @@ def process_question_parallel(
                 clean_chunk = stream_sanitizer.push(chunk_text)
                 if clean_chunk:
                     chunk_buffer.append(clean_chunk)
-                    if len(chunk_buffer) >= batch_size:
+                    if (not first_chunk_sent) or len(chunk_buffer) >= batch_size:
                         _broadcast(
                             {"type": "answer_chunk", "id": qa_id, "chunk": "".join(chunk_buffer)}
                         )
                         chunk_buffer.clear()
+                        first_chunk_sent = True
         if chunk_buffer:
             _broadcast({"type": "answer_chunk", "id": qa_id, "chunk": "".join(chunk_buffer)})
             chunk_buffer.clear()

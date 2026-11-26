@@ -680,6 +680,29 @@ def get_stt_engine(
         return engine
 
 
+def _engine_transcribe(
+    engine,
+    audio: np.ndarray,
+    sample_rate: int,
+    position: str,
+    language: str,
+    context: str = "",
+) -> str:
+    """调用引擎 transcribe；旧插件/测试的 4 参签名没有 context 时自动回退。"""
+    try:
+        return engine.transcribe(
+            audio,
+            sample_rate,
+            position=position,
+            language=language,
+            context=context,
+        )
+    except TypeError as exc:
+        if "context" not in str(exc):
+            raise
+        return engine.transcribe(audio, sample_rate, position=position, language=language)
+
+
 def transcribe_with_fallback(
     audio: np.ndarray,
     sample_rate: int,
@@ -695,6 +718,7 @@ def transcribe_with_fallback(
     whisper_lock_timeout_sec: Optional[float] = None,
     whisper_require_loaded: bool = False,
     fallback_on_empty_remote: bool = False,
+    context: str = "",
 ) -> str:
     """Resilient transcription: retry once, then fallback to whisper, with circuit breaker.
 
@@ -702,6 +726,10 @@ def transcribe_with_fallback(
       1. If circuit breaker is open and provider != whisper → go straight to whisper.
       2. Try primary engine (up to 2 attempts with 0.3s gap).
       3. On failure → record circuit failure → fallback to whisper.
+
+    ``context`` 是最近几句已确认转写（可选）：远程 ASR 走 corpus.context / prompt，
+    本地 FunASR 抽词做热词偏置，Whisper 拼进 initial_prompt。上下文只影响偏置，
+    不参与任何业务判定。
     """
     from core.config import get_config
     from api.realtime.ws import broadcast
@@ -780,12 +808,16 @@ def transcribe_with_fallback(
                             audio_sec,
                         )
                         return ""
-                    text = primary.transcribe(audio, sample_rate, position=position, language=language)
+                    text = _engine_transcribe(
+                        primary, audio, sample_rate, position, language, context
+                    )
                 finally:
                     if acquired:
                         infer_lock.release()
             else:
-                text = primary.transcribe(audio, sample_rate, position=position, language=language)
+                text = _engine_transcribe(
+                    primary, audio, sample_rate, position, language, context
+                )
             if is_remote and not (text or "").strip():
                 _log.warning(
                     "STT %s returned empty text scope=%s raw=%.1fs fallback_on_empty=%s",
@@ -812,11 +844,13 @@ def transcribe_with_fallback(
                             audio_sec,
                             retry_audio_sec,
                         )
-                        retry_text = primary.transcribe(
+                        retry_text = _engine_transcribe(
+                            primary,
                             retry_audio,
                             sample_rate,
-                            position=position,
-                            language=language,
+                            position,
+                            language,
+                            context,
                         )
                         if (retry_text or "").strip():
                             _call_circuit_reset(circuit_scope)

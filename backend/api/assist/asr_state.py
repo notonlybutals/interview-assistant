@@ -78,8 +78,9 @@ class AssistAsrStateMachine:
         turn_id = self.begin_asr_turn()
         self.record_asr_turn(now_mono)
         self.logger.info(
-            "ASR_QUESTION turn=%d utterances=%d churn=%s text=%r",
+            "ASR_QUESTION turn=%d utterances=%d churn=%s lag_ms=%.0f text=%r",
             turn_id, len(group.utterances), high_churn_short,
+            max(0.0, (now_mono - group.first_mono) * 1000.0),
             question_text[:150],
         )
         self.submit_answer_task(
@@ -95,6 +96,11 @@ class AssistAsrStateMachine:
                     "high_churn_short_answer": high_churn_short,
                     "dispatch_after_mono": now_mono + _asr_late_constraint_grace_sec(cfg),
                     "asr_tail_grace_until_mono": now_mono + _asr_late_constraint_grace_sec(cfg),
+                    # 延迟账本：从"第一段 ASR 落地"到"确认问句"再到"真正派发/首 token"，
+                    # 用来量化说完 → 出答案的每一段耗时。
+                    "asr_group_first_mono": group.first_mono,
+                    "asr_group_last_mono": group.last_mono,
+                    "asr_flush_mono": now_mono,
                 },
             )
         )
@@ -173,13 +179,8 @@ class AssistAsrStateMachine:
             return
         session.add_transcription(pub)
         self.broadcast({"type": "transcription", "text": pub})
-        if cfg.auto_detect:
-            source = (
-                "conversation_loopback"
-                if session.capture_is_loopback
-                else "conversation_mic"
-            )
-            self.handle_auto_detect_asr_text(cfg, session, pub, source, self.clock())
+        # 注意：自动答题判定已在 append_transcription_fragment 里逐片段做过，
+        # 这里只负责"显示用"的合并转写，避免同一个问题被判定两次。
 
     def try_flush_merge_buffer(self, cfg, session, now_mono: float, force: bool = False) -> None:
         if not self.merge_parts:
@@ -208,17 +209,20 @@ class AssistAsrStateMachine:
         now_mono: float,
         force_flush_tail: bool = False,
     ) -> None:
-        gap = float(getattr(cfg, "assist_transcription_merge_gap_sec", 2.0) or 0.0)
+        # 自动答题判定和显示合并解耦：每个 ASR 片段到货就参加问句判定，
+        # 不再等 assist_transcription_merge_gap_sec（历史上默认 2s）的显示合并。
+        # 显示区仍按 gap 合并，保证观感；判定走问句组自己的 confirm/max_wait 窗口。
+        source = (
+            "conversation_loopback"
+            if session.capture_is_loopback
+            else "conversation_mic"
+        )
+        if cfg.auto_detect:
+            self.handle_auto_detect_asr_text(cfg, session, pub, source, now_mono)
+        gap = float(getattr(cfg, "assist_transcription_merge_gap_sec", 0.9) or 0.0)
         if gap <= 0:
             session.add_transcription(pub)
             self.broadcast({"type": "transcription", "text": pub})
-            if cfg.auto_detect:
-                source = (
-                    "conversation_loopback"
-                    if session.capture_is_loopback
-                    else "conversation_mic"
-                )
-                self.handle_auto_detect_asr_text(cfg, session, pub, source, now_mono)
             return
         if not self.merge_parts:
             self.merge_mono_first = now_mono
@@ -231,22 +235,22 @@ class AssistAsrStateMachine:
 
 
 def _asr_confirm_window_sec(cfg) -> float:
-    confirm = float(getattr(cfg, "assist_asr_confirm_window_sec", 0.45) or 0.0)
+    confirm = float(getattr(cfg, "assist_asr_confirm_window_sec", 0.3) or 0.0)
     return max(0.0, min(5.0, confirm))
 
 
 def _asr_group_max_wait_sec(cfg) -> float:
-    max_wait = float(getattr(cfg, "assist_asr_group_max_wait_sec", 1.2) or 0.0)
+    max_wait = float(getattr(cfg, "assist_asr_group_max_wait_sec", 0.8) or 0.0)
     return max(0.2, min(8.0, max_wait))
 
 
 def _asr_fast_confirm_sec(cfg) -> float:
-    fast = float(getattr(cfg, "assist_asr_fast_confirm_sec", 1.15) or 0.0)
+    fast = float(getattr(cfg, "assist_asr_fast_confirm_sec", 0.45) or 0.0)
     return max(0.1, min(2.0, fast))
 
 
 def _asr_late_constraint_grace_sec(cfg) -> float:
-    grace = float(getattr(cfg, "assist_asr_late_constraint_grace_sec", 1.2) or 0.0)
+    grace = float(getattr(cfg, "assist_asr_late_constraint_grace_sec", 0.35) or 0.0)
     return max(0.0, min(3.0, grace))
 
 

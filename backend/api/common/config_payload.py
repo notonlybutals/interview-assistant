@@ -72,11 +72,25 @@ def build_config_payload(cfg) -> dict:
         "assist_vad_min_speech_sec": max(
             0.1, min(2.0, float(getattr(cfg, "assist_vad_min_speech_sec", 0.3) or 0.3))
         ),
+        "assist_vad_adaptive": bool(getattr(cfg, "assist_vad_adaptive", True)),
+        "assist_vad_noise_margin_db": max(
+            0.0, min(30.0, float(getattr(cfg, "assist_vad_noise_margin_db", 6.0) or 0.0))
+        ),
         "assist_asr_confirm_window_sec": max(
-            0.0, min(5.0, float(getattr(cfg, "assist_asr_confirm_window_sec", 0.45) or 0.0))
+            0.0, min(5.0, float(getattr(cfg, "assist_asr_confirm_window_sec", 0.3) or 0.0))
+        ),
+        "assist_asr_fast_confirm_sec": max(
+            0.1, min(2.0, float(getattr(cfg, "assist_asr_fast_confirm_sec", 0.45) or 0.45))
         ),
         "assist_asr_group_max_wait_sec": max(
-            0.2, min(8.0, float(getattr(cfg, "assist_asr_group_max_wait_sec", 1.2) or 1.2))
+            0.2, min(8.0, float(getattr(cfg, "assist_asr_group_max_wait_sec", 0.8) or 0.8))
+        ),
+        "assist_asr_late_constraint_grace_sec": max(
+            0.0,
+            min(3.0, float(getattr(cfg, "assist_asr_late_constraint_grace_sec", 0.35) or 0.0)),
+        ),
+        "assist_asr_context_chars": max(
+            0, min(2000, int(getattr(cfg, "assist_asr_context_chars", 600) or 0))
         ),
         "assist_asr_interrupt_running": bool(getattr(cfg, "assist_asr_interrupt_running", True)),
         "assist_high_churn_short_answer": bool(getattr(cfg, "assist_high_churn_short_answer", False)),

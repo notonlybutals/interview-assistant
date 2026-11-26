@@ -1394,8 +1394,8 @@ def test_process_question_parallel_flushes_batched_chunks_before_error(
     )
 
     chunks = [event["chunk"] for event in broadcasts if event["type"] == "answer_chunk"]
-    assert chunks[0] == "chunk-1chunk-2"
-    assert len(chunks) == 1
+    # 首个 chunk 立即上屏，出错前把剩余缓冲一起冲刷：内容不丢、顺序不变。
+    assert chunks == ["chunk-1", "chunk-2"]
     error = next(event for event in broadcasts if event["type"] == "answer_error")
     assert error["stage"] == "generation"
     assert error["message"] == "生成答案失败，请稍后重试。"
@@ -1920,9 +1920,24 @@ def test_exam_preflight_worker_events_do_not_pollute_session(monkeypatch: pytest
     )
 
     event_types = [event["type"] for event in broadcasts]
-    assert event_types == ["answer_start", "answer_chunk", "answer_done", "token_update"]
-    assert all(event.get("exam_preflight_id") == "preflight-1" for event in broadcasts[:3])
-    assert [event["type"] for event in recorded] == ["answer_start", "answer_chunk", "answer_done"]
+    # 首字优先：首个清洗后的 chunk 立即上屏（不再攒满 5 个 chunk），
+    # 因此这里会多一个 answer_chunk 事件。
+    assert event_types == [
+        "answer_start",
+        "answer_chunk",
+        "answer_chunk",
+        "answer_done",
+        "token_update",
+    ]
+    streamed = "".join(event["chunk"] for event in broadcasts if event["type"] == "answer_chunk")
+    assert streamed == "```python\ndef two_sum(nums, target):\n    return []\n```"
+    assert all(event.get("exam_preflight_id") == "preflight-1" for event in broadcasts[:4])
+    assert [event["type"] for event in recorded] == [
+        "answer_start",
+        "answer_chunk",
+        "answer_chunk",
+        "answer_done",
+    ]
     assert knowledge == []
     session = get_session()
     assert session.qa_pairs == []

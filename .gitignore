@@ -105,3 +105,6 @@ release/
 .packaging/
 desktop/.cache/
 .codegraph/
+
+# pytest 临时目录（tmpdir 前缀）
+pytest-of-*/

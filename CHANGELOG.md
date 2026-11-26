@@ -1,5 +1,29 @@
 # 修复日志
 
+## 2026-11-26 - 实时语音准确率与首答延迟优化（借鉴 CoverDrive）
+
+### 🎯 目标
+面试官说完 → 候选人看到答案首字的体感从 ~6.7~8.2s 压到 ~2.3~2.8s；同时减少断句截半句、中文术语识别错、陈述句被误判成问句。
+
+### ⚡ 延迟
+- **判定与显示合并解耦**：每个 ASR 片段到货立即参与自动答题判定，显示区仍按合并间隔合并（不再被 2s 显示合并窗口拖延）。
+- **确定性等待全部可配且收紧**：`assist_asr_fast_confirm_sec` 1.15s→0.45s、`assist_asr_late_constraint_grace_sec` 1.2s→0.35s（两项原本是 `getattr` 硬编码，写进 config.json 也不生效）、`confirm` 0.45→0.3、组最长等待 1.2→0.8、显示合并 2.0→0.9。
+- **首字优先上屏**：LLM 第一个清洗后的 chunk 立即广播（原来攒 5 个）；流式清洗尾巴 64→24 字符，首次上屏切在句末/换行。
+- **延迟账本**：`ASR_QUESTION lag_ms`、`ANSWER_START enqueue_to_start_ms`，配合 `ANSWER_DONE first_token/total` 可逐段定位。
+
+### 🎤 准确率
+- **自适应噪声底 VAD**：能量门限 = max(固定门限, 噪声底×margin)，开口后门限×0.65、开口期间冻结底噪，减少嘈杂环境误切和轻声句尾被吃掉。
+- **中文热词修复**：`build_tech_hotwords` 不再丢弃纯中文术语（高并发/缓存穿透/消息队列/分布式事务…），FunASR 热词预算 400→600 字符。
+- **ASR 上下文注入**：最近 4 段确认转写（≤600 字）作为下一段识别的偏置——豆包 `corpus.context`、通用 ASR `prompt`、Whisper `initial_prompt`、FunASR 上下文技术词热词。
+- **问句判定精度**：裸「说/讲/聊」不再算问句信号；「实现/设计/优化/排查/处理」移出强信号；新增祈使式出题（"设计一个…"）识别，减少"然后我就跟他说"这类陈述句被自动作答。
+
+### 📝 新增配置（`backend/config.example.json` / `docs/配置说明.md`）
+`assist_asr_fast_confirm_sec`、`assist_asr_late_constraint_grace_sec`、`assist_vad_adaptive`、`assist_vad_noise_margin_db`、`assist_asr_context_chars`。
+
+### ✅ 验证
+- 新增 `backend/tests/test_asr_latency_optimizations.py`；后端全量 `613 passed, 3 skipped`；ruff 通过。
+- 详细原理、CoverDrive 对比与调参建议见 [docs/性能优化-CoverDrive借鉴.md](docs/性能优化-CoverDrive借鉴.md)。
+
 ## 2026-06-23 - 面试复盘与启动优化
 
 ### 🐛 修复的问题

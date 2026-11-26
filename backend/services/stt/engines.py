@@ -16,7 +16,14 @@ from typing import Optional, Any
 import requests
 
 from core.logger import get_logger
-from .text_utils import TECH_VOCAB, _postprocess, _build_initial_prompt, build_tech_hotwords, custom_hotwords_from_config
+from .text_utils import (
+    TECH_VOCAB,
+    _postprocess,
+    _build_initial_prompt,
+    build_context_hotwords,
+    build_tech_hotwords,
+    custom_hotwords_from_config,
+)
 
 _log = get_logger("stt.engines")
 
@@ -119,6 +126,7 @@ def _build_ws_frame_full_request(
     app_key: str,
     boosting_table_id: str,
     language: str = "zh-CN",
+    context: str = "",
 ) -> bytes:
     req: dict[str, Any] = {
         "user": {"uid": app_key},
@@ -137,6 +145,20 @@ def _build_ws_frame_full_request(
     }
     if boosting_table_id and boosting_table_id.strip():
         req["request"]["corpus"] = {"boosting_table_id": boosting_table_id.strip()}
+    # 对话上下文注入（借 CoverDrive 的做法）：把最近几句转写作为 dialog_ctx 传上去，
+    # 上一句出现过的术语/人名会继续偏置下一句识别，减少同音词前后不一致。
+    # 协议要求 corpus.context 是 JSON 字符串，不是嵌套对象。
+    context_text = " ".join(str(context or "").split())
+    if context_text:
+        corpus = req["request"].setdefault("corpus", {})
+        corpus["context"] = json.dumps(
+            {
+                "context_type": "dialog_ctx",
+                "context_data": [{"text": context_text[-600:]}],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     payload_raw = json.dumps(req, ensure_ascii=False).encode("utf-8")
     payload = gzip.compress(payload_raw)
     # header(4) + sequence(4, 全量请求固定 1) + payload_size(4) + payload
@@ -246,7 +268,8 @@ class DoubaoSTT:
         }
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000,
-                   position: str = "后端开发", language: str = "Python") -> str:
+                   position: str = "后端开发", language: str = "Python",
+                   context: str = "") -> str:
         if not self.api_key and not self.access_token:
             return ""
         if websocket is None:
@@ -265,6 +288,7 @@ class DoubaoSTT:
             app_key,
             self.boosting_table_id,
             language=_doubao_language(language),
+            context=context,
         )
         n_samples = len(pcm)
         chunks = []
@@ -384,7 +408,8 @@ class GenericHTTPSTT:
         return ""
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000,
-                   position: str = "后端开发", language: str = "Python") -> str:
+                   position: str = "后端开发", language: str = "Python",
+                   context: str = "") -> str:
         if not self.api_base_url:
             raise RuntimeError("通用 ASR Base URL 未配置")
         if not self.api_key:
@@ -408,6 +433,11 @@ class GenericHTTPSTT:
                         headers[k.strip()] = v.strip()
         files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
         data = {"model": self.model, "response_format": "json"}
+        # OpenAI-compatible /audio/transcriptions 支持 prompt 字段：把最近转写作为
+        # 上下文提示，帮助模型延续专有名词写法（不支持的服务端会忽略该字段）。
+        context_text = " ".join(str(context or "").split())
+        if context_text:
+            data["prompt"] = context_text[-600:]
         try:
             resp = requests.post(url, headers=headers, files=files, data=data, timeout=(10, 60))
             if resp.status_code >= 400:
@@ -544,11 +574,14 @@ class FunASRSTT:
         self.load_model()
 
     def _hotword_string(self, position: str, language: str) -> str:
-        words = build_tech_hotwords(position, language, limit=400, custom=custom_hotwords_from_config())
+        # 600 字符预算：custom（用户词）排最前，其后是通用/语言/岗位词库；
+        # 400 时中文通用词库就会把语言/岗位词挤掉。
+        words = build_tech_hotwords(position, language, limit=600, custom=custom_hotwords_from_config())
         return " ".join(words)
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000,
-                   position: str = "后端开发", language: str = "Python") -> str:
+                   position: str = "后端开发", language: str = "Python",
+                   context: str = "") -> str:
         if self._model is None:
             self.load_model()
 
@@ -565,6 +598,11 @@ class FunASRSTT:
         generate_kwargs: dict[str, Any] = {"input": audio_f}
         if self.model_name.startswith("paraformer"):
             hotwords = self._hotword_string(position, language)
+            # 上一句里出现过的术语继续偏置下一句（CoverDrive dialog_ctx 的本地版）：
+            # FunASR 的热词是纯文本偏置列表，把上下文词放最前面，权重更稳。
+            context_words = build_context_hotwords(context, limit=24)
+            if context_words:
+                hotwords = " ".join([*context_words, hotwords]) if hotwords else " ".join(context_words)
             if hotwords:
                 generate_kwargs["hotword"] = hotwords
         if self.model_name == "sensevoice-small":
@@ -649,7 +687,8 @@ class STTEngine:
         self.load_model()
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000,
-                   position: str = "后端开发", language: str = "Python") -> str:
+                   position: str = "后端开发", language: str = "Python",
+                   context: str = "") -> str:
         if self._model is None:
             self.load_model()
 
@@ -659,6 +698,11 @@ class STTEngine:
 
         whisper_lang: Optional[str] = None if self.language in ("auto", "zh-en") else self.language
         initial_prompt = _build_initial_prompt(position, language)
+        # 上一段转写接在 initial_prompt 前作为上下文（whisper prompt 上限约 224 token，
+        # 这里只取尾部 160 字），让同一场面试的术语写法保持一致。
+        context_text = " ".join(str(context or "").split())
+        if context_text:
+            initial_prompt = f"{context_text[-160:]}\n{initial_prompt}"
         hotwords_str = " ".join(
             build_tech_hotwords(position, language, limit=900, custom=custom_hotwords_from_config())
         )

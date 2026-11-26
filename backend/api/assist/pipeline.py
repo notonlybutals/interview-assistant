@@ -20,6 +20,7 @@ _ilog = get_interview_logger()
 _elog = get_logger("pipeline")
 from services.audio import AudioCapture, VADBuffer, audio_capture
 from services.stt import (
+    build_asr_context_text,
     build_asr_question_group_text,
     get_stt_engine,
     transcribe_with_fallback,
@@ -1236,6 +1237,19 @@ def _flush_worker():
             _elog.error("flush_worker error: %s", e, exc_info=True)
 
 
+def _interviewer_asr_context(cfg) -> str:
+    """最近几句已确认转写，作为下一段 ASR 的上下文偏置（CoverDrive dialog_ctx 借鉴）。"""
+    max_chars = int(getattr(cfg, "assist_asr_context_chars", 600) or 0)
+    if max_chars <= 0:
+        return ""
+    try:
+        with conversation_lock:
+            history = list(get_session().transcription_history[-4:])
+    except Exception:
+        return ""
+    return build_asr_context_text(history, max_chars=max_chars)
+
+
 def _interviewer_asr_worker(runtime: _InterviewerRuntime, session, cfg) -> None:
     while True:
         if runtime.drain_event.is_set() and _interviewer_segment_backlog(runtime) == 0:
@@ -1249,6 +1263,7 @@ def _interviewer_asr_worker(runtime: _InterviewerRuntime, session, cfg) -> None:
             broadcast({"type": "transcribing", "value": True})
             t0 = time.monotonic()
             current_cfg = get_config()
+            context_text = _interviewer_asr_context(current_cfg)
             text = transcribe_with_fallback(
                 segment.audio,
                 segment.sample_rate,
@@ -1256,6 +1271,7 @@ def _interviewer_asr_worker(runtime: _InterviewerRuntime, session, cfg) -> None:
                 language=current_cfg.language,
                 scope="interviewer",
                 fallback_on_empty_remote=True,
+                context=context_text,
             )
             text = postprocess_interview_transcription(text)
             stt_ms = (time.monotonic() - t0) * 1000
@@ -1312,6 +1328,8 @@ def _interview_worker():
         min_speech_duration=getattr(cfg, "assist_vad_min_speech_sec", 0.3),
         preroll_duration=_interviewer_vad_preroll_sec,
         rollover_duration=_interviewer_vad_rollover_sec,
+        adaptive_threshold=getattr(cfg, "assist_vad_adaptive", True),
+        noise_margin_db=getattr(cfg, "assist_vad_noise_margin_db", 6.0),
     )
     session = get_session()
     _reset_asr_merge_buffer()
@@ -1654,6 +1672,8 @@ def _candidate_worker():
         sample_rate=AudioCapture.SAMPLE_RATE,
         silence_threshold=getattr(cfg, "silence_threshold", 0.01),
         silence_duration=getattr(cfg, "silence_duration", 1.2),
+        adaptive_threshold=getattr(cfg, "assist_vad_adaptive", True),
+        noise_margin_db=getattr(cfg, "assist_vad_noise_margin_db", 6.0),
     )
     session = get_session()
     current_segment_id = ""
