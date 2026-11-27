@@ -1184,18 +1184,24 @@ code, pre, .font-mono {
 }
 
 .ov-grip {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 50%;
   transform: translateX(-50%);
-  /* 可视横条只有 3px，但命中区域放大到 72x18，方便鼠标拖动悬浮窗 */
-  width: 72px;
-  height: 18px;
-  border-radius: 9px;
+  /* prompt 模式下内容壳层会收缩到很小；用 fixed 相对整个窗口居中，
+   * 避免拖动条跑偏到左上角。可视横条只有 3px，命中区域放大到 108x22。 */
+  width: 108px;
+  height: 22px;
+  border-radius: 11px;
   background: transparent;
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity 200ms ease;
   pointer-events: auto;
+  /* 原生拖动区作为 pointer 事件的兜底：部分 Windows 机器上非焦点窗口
+   * 的 pointermove 不会连续送达，但系统原生拖动始终可用。 */
+  -webkit-app-region: drag;
+  cursor: grab;
+  z-index: 2147483000;
   cursor: move;
   touch-action: none;
   z-index: 20;
@@ -1214,7 +1220,8 @@ code, pre, .font-mono {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.35);
 }
-.ov-shell:hover .ov-grip {
+.ov-shell:hover .ov-grip,
+.ov-grip:hover {
   opacity: 1;
 }
 

@@ -1,4 +1,4 @@
-Unicode true
+﻿Unicode true
 !include "MUI2.nsh"
 !cd ".."
 
@@ -12,8 +12,7 @@ OutFile "release\InterviewAssistant-${APP_VERSION}-Setup-x64.exe"
 InstallDir "$LOCALAPPDATA\Programs\InterviewAssistant"
 InstallDirRegKey HKCU "Software\InterviewAssistant" "InstallDir"
 RequestExecutionLevel user
-SetCompressor /SOLID lzma
-SetCompressorDictSize 64
+SetCompressor zlib
 
 !define MUI_ICON "desktop\build\icon.ico"
 !define MUI_UNICON "desktop\build\icon.ico"
