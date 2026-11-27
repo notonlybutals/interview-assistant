@@ -71,7 +71,18 @@ export function useOverlayWindowSync(_isRecording: boolean, _appMode: string) {
   useEffect(() => {
     if (!window.electronAPI?.onOverlayState) return
     const removeOverlayListener = window.electronAPI.onOverlayState((payload) => {
-      if (Date.now() < overlaySyncUntilRef.current) return
+      // 500ms 内是主进程回显我们自己的样式 sync；但「可见性」是主进程/悬浮窗侧
+      // 发起的状态变化（例如点了悬浮窗的 × 关闭按钮），必须立即接受，否则前端仍
+      // 认为悬浮窗是打开的，下一次 Ctrl+O 会被当成「关闭」→ 看起来像 Ctrl+B。
+      if (Date.now() < overlaySyncUntilRef.current) {
+        if (typeof payload.visible === 'boolean') {
+          const current = useUiPrefsStore.getState().interviewOverlayVisible
+          if (current !== payload.visible) {
+            applyInterviewOverlayState(payload, { persistStyle: false })
+          }
+        }
+        return
+      }
       applyInterviewOverlayState(payload, { persistStyle: true })
     })
     return () => removeOverlayListener?.()

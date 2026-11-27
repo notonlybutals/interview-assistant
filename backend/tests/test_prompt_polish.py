@@ -6,6 +6,23 @@ from core.config import get_config
 from services.llm import build_system_prompt, create_answer_stream_sanitizer
 
 
+@pytest.fixture(autouse=True)
+def _pin_tech_interview_mode(monkeypatch):
+    """这些用例验证技术岗 prompt；本机 config.json 可能被用户切到 general 模式。"""
+    from services.llm import prompts
+
+    original_get_config = prompts.get_config
+
+    def _get():
+        cfg = original_get_config()
+        try:
+            return cfg.model_copy(update={"interview_mode": "tech"})
+        except Exception:
+            return cfg
+
+    monkeypatch.setattr(prompts, "get_config", _get)
+
+
 @pytest.fixture
 def reset_resume():
     cfg = get_config()

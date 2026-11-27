@@ -15,6 +15,13 @@ const DEFAULT_SHORTCUTS = {
     label: '隐藏/显示窗口',
     category: '窗口',
   },
+  toggleContentProtection: {
+    action: 'toggleContentProtection',
+    key: 'CommandOrControl+Shift+S',
+    defaultKey: 'CommandOrControl+Shift+S',
+    label: '允许/恢复截图（屏幕共享隐身）',
+    category: '窗口',
+  },
   hardClearSession: {
     action: 'hardClearSession',
     key: 'CommandOrControl+.',

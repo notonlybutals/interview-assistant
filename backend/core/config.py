@@ -166,6 +166,12 @@ class AppConfig(BaseModel):
 
     position: str = "后端开发"
     language: str = "Python"
+    # 目标公司（选填，尤其适用于非技术岗/校招管培生/质检/运营等，如：伊利、中粮、华测检测、海底捞）：
+    # 填写后模型在回答「对我们公司有什么了解/为什么选我们公司/核心价值观」等问题时会自动结合该公司背景。
+    target_company: str = ""
+    # 面试岗位类型：tech=技术岗（默认，本工具主要场景）；general=非技术岗（管培生/运营/质检/销售等）。
+    # general 时 prompt 换成行为面/动机面/专业基础风格，不出技术八股和代码。
+    interview_mode: str = "tech"
     resume_text: Optional[str] = None
     # 当前生效的简历对应的历史记录 id（写入 config.json；简历正文仍不入库）
     resume_active_history_id: Optional[int] = None
@@ -178,10 +184,15 @@ class AppConfig(BaseModel):
     max_parallel_answers: int = 2
     # 答案区流式输出时，距底部小于该像素则自动滚到底（调小便于手动上滑回看）
     answer_autoscroll_bottom_px: int = 40
+    # 生成时是否自动跟随到底部。默认 False：新答案从第一行开始看，后面的内容自己往下长，
+    # 不在阅读中途把视口滚到最后一行（面试场景按顺序读更合理）。
+    answer_autoscroll_follow: bool = False
     # 转写广播/入历史/自动答题：去标点后的有效字符（中英数字）至少为该值；过滤「嗯」等
     transcription_min_sig_chars: int = 2
-    # 实时辅助：多段 ASR 合并后再写入转写/触发自动答题。上一段结束后若超过该秒数仍无新段则送出；0=关闭合并（恢复每段立即发送）
-    assist_transcription_merge_gap_sec: float = 2.0
+    # 实时辅助：多段 ASR 合并后再写入转写区显示。上一段结束后若超过该秒数仍无新段则送出；
+    # 0=关闭合并（恢复每段立即发送）。注意：自动答题判定已与显示合并解耦（见 asr_state），
+    # 这里只影响转写区的观感，不再拖慢答题。
+    assist_transcription_merge_gap_sec: float = 0.9
     # 从第一段 ASR 起最长等待（秒），超时强制送出，避免对方长停顿导致永远不触发
     assist_transcription_merge_max_sec: float = 12.0
     # 主链路 VAD 单段最长语音（秒），避免面试官连续讲话被攒成超长音频导致远程 ASR 超时
@@ -189,10 +200,26 @@ class AppConfig(BaseModel):
     # 主链路 VAD 单段最短语音（秒）；短于该值的片段视为噪声/语气词丢弃，不送 STT。
     # 调小可减少短句被误丢（漏听），调大可减少噪声片段送 STT。原硬编码 0.5。
     assist_vad_min_speech_sec: float = 0.3
+    # 主链路 VAD 自适应能量门限：门限 = max(silence_threshold, 噪声底 × margin)。
+    # 嘈杂房间/风扇/键盘声下比固定 0.01 稳，减少噪声被当人声切段（CoverDrive 同款思路）。
+    assist_vad_adaptive: bool = True
+    # 自适应门限相对噪声底抬高多少 dB；6dB≈2 倍，越大越抗噪但越容易漏轻声。
+    assist_vad_noise_margin_db: float = 6.0
     # 实时辅助：问句候选组在最后一条有效追问后静默超过该秒数再确认提交
-    assist_asr_confirm_window_sec: float = 0.45
+    assist_asr_confirm_window_sec: float = 0.3
+    # 实时辅助：放宽问句判定。宁多答不漏答：无法命中问句线索的长句也作为候选提交。
+    assist_asr_question_relaxed: bool = True
+    # 实时辅助：候选组含强问句信号（promote）时，最后一条后静默超过该秒数立即提交。
+    # 原先是 1.15s 的 getattr 硬编码，不可配且白等 ≈1s。
+    assist_asr_fast_confirm_sec: float = 0.45
     # 实时辅助：候选问句组从第一条有效追问开始的最长等待时间
-    assist_asr_group_max_wait_sec: float = 1.2
+    assist_asr_group_max_wait_sec: float = 0.8
+    # 实时辅助：确认问句后延迟派发答题的最长时间，用来等「迟到约束尾词」合并进问题。
+    # 原先是 1.2s 的 getattr 硬编码；0.35s 保留尾词合并能力，同时不再白等 1.2s。
+    assist_asr_late_constraint_grace_sec: float = 0.35
+    # 实时辅助：把最近多少字的已确认转写作为 ASR 上下文注入（0=关闭）。
+    # 远程 ASR 走 corpus.context/prompt，本地 FunASR 抽词做热词偏置，Whisper 进 initial_prompt。
+    assist_asr_context_chars: int = 600
     # 实时辅助：确认新问句组后是否中断仍在生成的旧 ASR 回答
     assist_asr_interrupt_running: bool = True
     # 实时辅助：高 churn 场景下自动切短答，优先跟住最新问题
@@ -305,6 +332,11 @@ class AppConfig(BaseModel):
                 )
                 self.candidate_whisper_language = ""
         self.stt_infer_threads = max(0, min(64, int(self.stt_infer_threads or 0)))
+        interview_mode = str(getattr(self, "interview_mode", "tech") or "").strip().lower()
+        if interview_mode not in ("tech", "general"):
+            logger.warning("interview_mode=%r 不支持，已重置为 tech", interview_mode)
+            interview_mode = "tech"
+        self.interview_mode = interview_mode
         fbp = (self.stt_fallback_provider or "").strip().lower()
         if fbp not in STT_FALLBACK_PROVIDER_OPTIONS:
             logger.warning("stt_fallback_provider=%r 不支持，已重置为 whisper", fbp)
@@ -325,6 +357,29 @@ class AppConfig(BaseModel):
         self.screen_capture_max_long_edge = max(0, min(4000, int(self.screen_capture_max_long_edge or 0)))
         self.assist_vad_max_speech_sec = max(6.0, min(60.0, float(self.assist_vad_max_speech_sec or 18.0)))
         self.assist_vad_min_speech_sec = max(0.1, min(2.0, float(self.assist_vad_min_speech_sec or 0.3)))
+        self.assist_vad_adaptive = bool(getattr(self, "assist_vad_adaptive", True))
+        self.assist_vad_noise_margin_db = max(
+            0.0, min(30.0, float(getattr(self, "assist_vad_noise_margin_db", 6.0) or 0.0))
+        )
+        self.assist_transcription_merge_gap_sec = max(
+            0.0, min(15.0, float(self.assist_transcription_merge_gap_sec or 0.0))
+        )
+        self.assist_asr_confirm_window_sec = max(
+            0.0, min(5.0, float(self.assist_asr_confirm_window_sec or 0.0))
+        )
+        self.assist_asr_fast_confirm_sec = max(
+            0.1, min(2.0, float(getattr(self, "assist_asr_fast_confirm_sec", 0.45) or 0.45))
+        )
+        self.assist_asr_group_max_wait_sec = max(
+            0.2, min(8.0, float(self.assist_asr_group_max_wait_sec or 0.8))
+        )
+        self.assist_asr_late_constraint_grace_sec = max(
+            0.0,
+            min(3.0, float(getattr(self, "assist_asr_late_constraint_grace_sec", 0.35) or 0.0)),
+        )
+        self.assist_asr_context_chars = max(
+            0, min(2000, int(getattr(self, "assist_asr_context_chars", 600) or 0))
+        )
         self.assist_stop_answer_wait_sec = max(0.0, min(20.0, float(self.assist_stop_answer_wait_sec)))
         self.assist_interviewer_asr_drain_timeout_sec = max(
             0.5,
@@ -406,6 +461,19 @@ def _save_config(cfg: AppConfig) -> bool:
 POSITION_OPTIONS = [
     "前端开发", "后端开发", "全栈开发", "算法工程师", "测试开发",
     "机器学习工程师", "数据开发", "DBA", "产品经理", "项目经理",
+]
+GENERAL_POSITION_OPTIONS = [
+    "管理培训生（管培生）",
+    "酒店管培生",
+    "质量管理 / 质检工程师（QC/QA）",
+    "食品研发 / 检测分析员",
+    "环境工程 / EHS工程师",
+    "实验室管理员 / 科研助理",
+    "运营专员 / 市场营销",
+    "供应链 / 采购物流管培生",
+    "人力资源 / 行政管培生",
+    "客户经理 / 销售管培生",
+    "项目专员 / 综合管理",
 ]
 LANGUAGE_OPTIONS = [
     "Python", "Java", "C++", "JavaScript", "TypeScript",

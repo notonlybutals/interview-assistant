@@ -75,6 +75,14 @@ TECH_VOCAB = {
         "ETL 数据仓库 数据湖 ODS DWD DWS ADS 维度建模 "
         "Parquet ORC Avro Kafka ClickHouse Doris Impala"
     ),
+    "非技术通用": (
+        "管培生 管理培训生 校招 应届生 轮岗 职业规划 团队协作 沟通协调 "
+        "实习经历 学生会 研究生会 实验室安全 隐患排查 质量控制 质量管理 "
+        "QC QA EHS ISO9001 ISO14001 HACCP GMP SOP 理化检测 微生物检测 "
+        "样品前处理 原子荧光 ICP 原子吸收 气相色谱 液相色谱 pH 含水量 "
+        "SPSS Origin Excel 数据分析 显著性检验 标准曲线 平行样 空白对照 "
+        "国家重点研发计划 十四五 食品科学 环境工程 复盘 核心价值观"
+    ),
 }
 
 TERM_CORRECTIONS = {
@@ -276,6 +284,18 @@ def postprocess_interview_transcription(text: str) -> str:
 
 def _build_initial_prompt(position: str, language: str) -> str:
     """Short demonstration prompt for Whisper (keep ~100 chars to avoid hallucination)."""
+    try:
+        from core.config import get_config
+
+        mode = str(getattr(get_config(), "interview_mode", "tech") or "tech").strip().lower()
+    except Exception:
+        mode = "tech"
+    pos = (position or "").strip() or "目标岗位"
+    if mode == "general":
+        return (
+            f"这是一段中文面试语音，岗位是「{pos}」，可能包含专业术语、实验/质检指标、"
+            "学生工作与团队协作内容。请准确识别中文原词与公司/岗位名称。"
+        )
     return (
         "这是一段技术面试语音，可能中英混说且口音不标准。"
         "请优先识别技术术语英文原词，如 Redis、ZSET、Sorted Set、MySQL、Docker、Kubernetes、API。"
@@ -303,24 +323,45 @@ def build_tech_hotwords(
     limit: int = 900,
     custom: Optional[dict] = None,
 ) -> list[str]:
-    """从 TECH_VOCAB 提取英文热词（通用/语言/岗位三个词库去重），供 ASR 引擎做偏置。
+    """从 TECH_VOCAB 提取技术热词（通用/语言/岗位三个词库去重），供 ASR 引擎做偏置。
 
     custom 是用户按岗位配置的热词（{岗位: 词串}）；"通用" 键与当前岗位键会合并进来，
     每次转写动态读取，改配置无需重建引擎。Whisper 的 hotwords 参数与 FunASR
     paraformer 的 hotword 参数共用。
+
+    中文术语同样要带上：FunASR paraformer 的热词支持中文，之前只保留含 ASCII
+    字母的词，等于把「高并发 / 缓存穿透 / 消息队列 / 分布式事务」这类最需要纠正的
+    中文技术词全部丢掉了（实测日志里 "擦除 / 泛型" 这类同音词就是热词缺位）。
     """
     # 自定义热词优先：超长截断从尾部丢，内置词库很长，用户的专属词
     # 若排在后面会被截掉，而它们恰恰是最需要偏置的。
     words: list[str] = []
+    interview_mode = "tech"
+    target_company = ""
+    try:
+        from core.config import get_config
+
+        cfg = get_config()
+        interview_mode = str(getattr(cfg, "interview_mode", "tech") or "tech").strip().lower()
+        target_company = str(getattr(cfg, "target_company", "") or "").strip()
+    except Exception:
+        pass
+    if target_company and interview_mode == "general":
+        words.extend(_split_hotword_text(target_company))
     if custom:
         for key in ("通用", position):
             words.extend(_split_hotword_text(str(custom.get(key, ""))))
-    for key in ("通用", language, position):
+    vocab_keys = (
+        ("非技术通用", position, "通用")
+        if interview_mode == "general"
+        else ("通用", language, position)
+    )
+    for key in vocab_keys:
         vocab = TECH_VOCAB.get(key)
         if not vocab:
             continue
         for w in vocab.split():
-            if w and any(c.isascii() and c.isalpha() for c in w):
+            if w:
                 words.append(w)
     unique = list(dict.fromkeys(words))
     if limit > 0:
@@ -330,6 +371,53 @@ def build_tech_hotwords(
             truncated = truncated.rsplit(" ", 1)[0]
         unique = truncated.split()
     return unique
+
+
+_ASCII_TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#._/-]{1,24}")
+_CJK_TERM_RE = re.compile(rf"[{_CJK}]")
+
+
+def build_context_hotwords(context: str, limit: int = 24) -> list[str]:
+    """从最近几句转写里抽技术词，作为下一段 ASR 的热词偏置。
+
+    对应 CoverDrive 的「ASR 对话上下文注入」：上一句说过的 *Redis / 分布式事务* 等
+    术语，在下一句同音词上继续偏置，避免同一个词这场面试里一会儿对一会儿错。
+    只抽两类：英文术语原词 + TECH_VOCAB 里出现过的中文术语；限制条数防止污染。
+    """
+    ctx = (context or "").strip()
+    if not ctx:
+        return []
+    words: list[str] = []
+    words.extend(m.group(0) for m in _ASCII_TERM_RE.finditer(ctx))
+    seen: set[str] = set(words)
+    for vocab in TECH_VOCAB.values():
+        for w in vocab.split():
+            if not w or w in seen:
+                continue
+            if _CJK_TERM_RE.search(w) and w in ctx:
+                words.append(w)
+                seen.add(w)
+    deduped = list(dict.fromkeys(words))
+    if limit > 0:
+        deduped = deduped[:limit]
+    return deduped
+
+
+def build_asr_context_text(history: list[str], max_chars: int = 600) -> str:
+    """把最近转写拼成 ASR 上下文（最新的一条在最后，整体只用尾部 max_chars 字）。"""
+    if not history or max_chars <= 0:
+        return ""
+    joined = ""
+    for item in reversed(history):
+        text = " ".join(str(item or "").split())
+        if not text:
+            continue
+        candidate = f"{text} {joined}".strip() if joined else text
+        if len(candidate) > max_chars:
+            joined = candidate[-max_chars:]
+            break
+        joined = candidate
+    return joined.strip()
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +491,22 @@ _BACKCHANNEL = re.compile(
     r")(?:[\s,，。.!！?？;；:：、]+|$)",
     re.IGNORECASE,
 )
+# 强问句信号：命中即 promote（可直接触发自动答题）。
+# 注意「说 / 讲 / 聊」必须带 一下/下 或叠词：裸「说」会把
+# "然后我就跟他说" 这类陈述句误判成问句（真实面试日志里发生过，导致答非所问）。
 _QUESTION_CUE = re.compile(
-    r"(什么|怎么|如何|为什么|为何|区别|原理|作用|流程|实现|设计|优化|排查|处理|"
-    r"介绍(?:一下|下)?|说(?:一下|下)?|讲(?:一下|下)?|聊(?:一下|下)?|解释(?:一下|下)?|"
-    r"分析(?:一下|下)?|怎么做|怎么办|有哪些|是否|能不能|可不可以|对比(?:一下|下)?|"
-    r"展开讲讲|详细说说|举个例子|继续讲|接着说)",
+    r"(什么|怎么|如何|为什么|为何|区别|原理|作用|有哪些|是否|能不能|可不可以|"
+    r"怎么做|怎么办|对比(?:一下|下)?|展开讲讲|详细说说|举个例子|继续讲|接着说|"
+    r"说说|讲讲|聊聊|说一下|讲一下|聊一下|谈一下|"
+    r"介绍(?:一下|下)?|解释(?:一下|下)|分析(?:一下|下)|描述(?:一下|下))",
+    re.IGNORECASE,
+)
+# 祈使式出题：「设计一个秒杀系统」「优化一下这条 SQL」没有问号也没有疑问词，
+# 但句首/逗号后的祈使动词 + 量词结构基本只出现在出题语境。
+_IMPERATIVE_CUE = re.compile(
+    r"(?:^|[，,。；;！!?？\s])"
+    r"(?:设计|实现|写|手写|优化|排查|对比|分析|讲讲|说说|聊聊|介绍一下)"
+    r"(?:一个|一下|下|个|这套|这个|这段|这段代码|这个场景|这道题)",
     re.IGNORECASE,
 )
 _DIRECTIVE_QUESTION_CUE = re.compile(
@@ -546,9 +645,18 @@ def classify_asr_question_candidate(
     sig = transcription_significant_len(normalized)
     need = max(2, int(min_significant_chars))
     has_question_mark = "?" in text or "？" in text
-    has_question_cue = bool(_QUESTION_CUE.search(normalized))
+    has_question_cue = bool(_QUESTION_CUE.search(normalized)) or bool(
+        _IMPERATIVE_CUE.search(normalized)
+    )
     has_directive_cue = bool(_DIRECTIVE_QUESTION_CUE.search(normalized))
     has_tail_question = bool(re.search(r"(?:吗|么|呢)$", normalized))
+    # 「…的吧 / …对吧 / …是吧」也常是出题句（如"你知道我们这个岗位是需要轮岗的吧"）。
+    # 单独要求句子里出现「你/您」且长度足够，避免"我们开始吧"这类非提问被误触发。
+    has_soft_tail_question = bool(
+        re.search(r"(?:吧|是吧|对吧)$", normalized)
+        and re.search(r"[你您]", normalized)
+        and sig >= max(6, need)
+    )
     incomplete_tail = bool(_INCOMPLETE_TAIL.search(normalized))
     low_value_fragment = bool(_LOW_VALUE_FRAGMENT.fullmatch(normalized))
     constraint_tail = bool(_QUESTION_CONSTRAINT_TAIL.search(normalized))
@@ -561,6 +669,8 @@ def classify_asr_question_candidate(
     if has_question_cue or has_directive_cue:
         return "promote", normalized
     if has_tail_question and sig >= max(3, need - 1):
+        return "promote", normalized
+    if has_soft_tail_question:
         return "promote", normalized
     if incomplete_tail:
         if sig >= need:
@@ -584,6 +694,7 @@ def is_asr_question_constraint_tail(text: str) -> bool:
 def is_viable_asr_question_group(
     texts: list[str],
     min_significant_chars: int = 4,
+    relaxed: bool = False,
 ) -> bool:
     cleaned_parts: list[str] = []
     saw_promote = False
@@ -602,6 +713,12 @@ def is_viable_asr_question_group(
     if len(cleaned_parts) >= 2:
         return True
     if len(cleaned_parts) == 1:
+        # 放宽模式：宁多答不漏答——足够长、带「你/您」或岗位/工作类字眼的长句，
+        # 即使没命中问句线索也提交（面试官很多提问是陈述句/省略问号的口气）。
+        if relaxed:
+            only = cleaned_parts[0]
+            if transcription_significant_len(only) >= max(8, int(min_significant_chars) + 4):
+                return True
         return False
     merged = "".join(cleaned_parts)
     return transcription_significant_len(merged) >= max(3, int(min_significant_chars))

@@ -270,6 +270,9 @@ interview-assistant/
 - **Whisper 模型下载慢**：可设置 `export HF_ENDPOINT=https://hf-mirror.com`。
 - **中文/术语识别不准（如 RAG 被听错）**：主链路切到 FunASR 并下载模型，配合设置 → 热词里的岗位自定义词；Whisper 用户也可在热词页配置提示偏置。
 - **转写时风扇狂转**：设置 → 节奏 → 性能，调低「本地 ASR 推理线程数」（默认自动 = min(8, 核数-2)）。
+- **首答太慢 / 断句切半句**：见 [性能优化-CoverDrive借鉴](docs/性能优化-CoverDrive借鉴.md)，可调 `silence_duration`、`assist_asr_confirm_window_sec`、`assist_asr_fast_confirm_sec` 等（`backend/config.json`）。
+- **双击启动后提示「桌面应用启动失败」，日志里没有任何 Electron 输出**：少数 Windows 机器上安全软件/系统策略会让 Chromium 沙箱初始化直接崩溃（进程以 `0x80000003` 退出）。启动器已自动检测并改用 `--no-sandbox` 重试；也可以双击 `启动-兼容模式.bat`（显式设置 `IA_ELECTRON_NO_SANDBOX=1`）启动。
+- **双击后「什么都没发生」**：先看 `log/launch.log` 有没有本次启动记录——没有说明批处理/快捷方式没被执行（检查快捷方式目标是否指向 `start-app.bat` 或 `启动.bat`）；有记录则结合 `log/startup-console.log` 和 Python 退出码排查。启动器现在还会在端口仍被残留进程占用（尤其是更高权限进程）时直接报错，而不是静默退出。
 - **端口冲突**：可改用 `python start.py --port 9090`。
 
 ## 开源协议与免责

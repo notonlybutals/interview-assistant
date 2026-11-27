@@ -17,6 +17,7 @@ from .text_utils import (
     is_asr_question_constraint_tail,
     is_viable_asr_question_group,
     build_asr_question_group_text,
+    build_asr_context_text,
     classify_followup,
     AsrQuestionCandidate,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "is_asr_question_constraint_tail",
     "is_viable_asr_question_group",
     "build_asr_question_group_text",
+    "build_asr_context_text",
     "classify_followup",
     "AsrQuestionCandidate",
     "STTEngine",

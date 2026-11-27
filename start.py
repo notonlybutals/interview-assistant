@@ -85,6 +85,34 @@ def _hidden_process_kwargs() -> dict:
     return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)}
 
 
+def _electron_no_sandbox_requested() -> bool:
+    """IA_ELECTRON_NO_SANDBOX=1 时给 Electron 加 --no-sandbox（兼容沙箱崩溃的 Windows 机器）。"""
+    return os.environ.get("IA_ELECTRON_NO_SANDBOX", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Chromium 沙箱初始化失败时 Windows 以 STATUS_BREAKPOINT(0x80000003) 退出，
+# Python 里可能是无符号 2147483651，也可能是负数 -2147483645。
+_ELECTRON_SANDBOX_CRASH_CODES = (2147483651, -2147483645)
+
+
+def _electron_command(npx: Optional[str]) -> list[str]:
+    """优先直接运行 electron 可执行文件，找不到时再退回 npx。
+
+    直接跑 `node_modules/electron/dist/electron.exe` 可以绕开 npx 的参数解析，
+    启动也更快；某些机器上 `npx electron --no-sandbox .` 里的参数不一定能透传。
+    """
+    is_win = platform.system() == "Windows"
+    if is_win:
+        exe = os.path.join(DESKTOP_DIR, "node_modules", "electron", "dist", "electron.exe")
+        if os.path.isfile(exe):
+            return [exe]
+    bin_name = "electron.cmd" if is_win else "electron"
+    bin_path = os.path.join(DESKTOP_DIR, "node_modules", ".bin", bin_name)
+    if os.path.isfile(bin_path):
+        return [bin_path]
+    return [npx or "npx", "electron"]
+
+
 def get_local_ip() -> str:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -269,8 +297,22 @@ def ensure_electron():
 # Port management
 # ---------------------------------------------------------------------------
 
-def kill_port(port: int):
-    """Kill any process occupying the given port."""
+def _port_in_use(port: int, timeout: float = 0.3) -> bool:
+    """端口上是否已有进程在监听（只连本机回环，不触发业务请求）。"""
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def kill_port(port: int) -> bool:
+    """Kill any process occupying the given port.
+
+    Returns True when the port is free afterwards. 如果占用进程权限比当前进程高
+    （例如上一次用管理员权限启动后残留的后台进程），taskkill 会失败；调用方必须
+    检查返回值并给出明确错误，而不是继续启动后「什么都没发生」。
+    """
     system = platform.system()
     killed = False
     try:
@@ -300,6 +342,7 @@ def kill_port(port: int):
         print(f"[WARN] 清理端口 {port} 时出错: {e}")
     if killed:
         time.sleep(0.5)
+    return not _port_in_use(port)
 
 
 # ---------------------------------------------------------------------------
@@ -367,7 +410,12 @@ def run_desktop_mode(port: int):
     # Pre-clean the port BEFORE Electron launches (Electron spawns
     # start.py --mode network internally, but if a zombie process holds
     # the port, it would fail deep inside that chain with a confusing error).
-    kill_port(port)
+    if not kill_port(port):
+        print()
+        print(f"[ERROR] 端口 {port} 仍被占用，启动已中止（占用进程可能比当前程序权限更高）。")
+        print("  常见原因：上一次用管理员权限启动后残留的后台进程，或其它程序占用了该端口。")
+        print("  处理：在任务管理器结束残留的 InterviewAssistant / python 进程，或重启电脑后再试。")
+        sys.exit(1)
 
     # Windows: 如果当前进程还有控制台窗口，以无窗口模式重启自己并监控
     # 就绪：启动成功→隐藏本窗口；失败→保留窗口并展示启动日志，方便排错。
@@ -432,7 +480,24 @@ def run_desktop_mode(port: int):
 
     # 到这里说明已经是无窗口模式了（或者不是 Windows）
     env = {**os.environ, "PORT": str(port), HIDE_CONSOLE_ENV: "1"}
-    proc = subprocess.run([npx, "electron", "."], cwd=DESKTOP_DIR, env=env, **_hidden_process_kwargs())
+    command = _electron_command(npx)
+    # 少数 Windows 机器（安全软件注入 / 系统策略）会让 Chromium 沙箱初始化即崩溃：
+    # 进程以 0x80000003（STATUS_BREAKPOINT）退出且没有任何输出。设置
+    # IA_ELECTRON_NO_SANDBOX=1 可跳过 Chromium 沙箱（仅本机应用，内容全部本地加载）。
+    no_sandbox = _electron_no_sandbox_requested()
+
+    def _spawn(use_no_sandbox: bool):
+        args = [*command]
+        if use_no_sandbox:
+            args.append("--no-sandbox")
+        args.append(".")
+        return subprocess.run(args, cwd=DESKTOP_DIR, env=env, **_hidden_process_kwargs())
+
+    proc = _spawn(no_sandbox)
+    if proc.returncode in _ELECTRON_SANDBOX_CRASH_CODES and not no_sandbox:
+        # 沙箱初始化失败自动降级重试一次：本应用只加载本地前端和本机后端，风险可控。
+        print("[WARN] Electron 沙箱初始化失败（STATUS_BREAKPOINT），改用 --no-sandbox 重试…", flush=True)
+        proc = _spawn(True)
     sys.exit(proc.returncode)
 
 
@@ -453,6 +518,9 @@ def run_network_mode(port: int):
 def main():
     # Switch console to UTF-8 immediately on Windows (before any print)
     _set_utf8_console()
+    # 从 Electron 宿主（DSH/Codex 等）继承时 ELECTRON_RUN_AS_NODE=1 会让 electron.exe
+    # 以纯 Node 运行、require('electron') 直接崩。启动器自己清掉，避免依赖外部 bat。
+    os.environ.pop("ELECTRON_RUN_AS_NODE", None)
 
     parser = argparse.ArgumentParser(description="面试助手启动器")
     parser.add_argument("--mode", choices=["desktop", "network"], default="desktop",
@@ -478,6 +546,17 @@ def main():
     print(f"  Python: {sys.version.split()[0]}  ({sys.executable})")
     print(f"  平台: {platform.system()} {platform.machine()}")
     print()
+
+    # FunASR / ModelScope 默认把模型缓存到 ~/.cache/modelscope；少数 Windows 机器上
+    # 该目录不可写（安全软件/系统策略，报 WinError 5），导致模型下载/加载失败。
+    # 未显式配置时退回到项目内的缓存目录（可用 MODELSCOPE_CACHE 覆盖）。
+    if not os.environ.get("MODELSCOPE_CACHE", "").strip():
+        fallback_cache = os.path.join(ROOT, ".modelscope-cache")
+        try:
+            os.makedirs(fallback_cache, exist_ok=True)
+            os.environ["MODELSCOPE_CACHE"] = fallback_cache
+        except OSError:
+            pass
 
     # Ensure Python deps (auto-install if missing)
     if not args.skip_dep_check:

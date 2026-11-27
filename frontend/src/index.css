@@ -1184,21 +1184,114 @@ code, pre, .font-mono {
 }
 
 .ov-grip {
-  position: absolute;
-  top: 6px;
+  position: fixed;
+  top: 0;
   left: 50%;
+  transform: translateX(-50%);
+  /* prompt 模式下内容壳层会收缩到很小；用 fixed 相对整个窗口居中，
+   * 避免拖动条跑偏到左上角。可视横条只有 3px，命中区域放大到 108x22。 */
+  width: 108px;
+  height: 22px;
+  border-radius: 11px;
+  background: transparent;
+  opacity: 0.55;
+  transition: opacity 200ms ease;
+  pointer-events: auto;
+  /* 原生拖动区作为 pointer 事件的兜底：部分 Windows 机器上非焦点窗口
+   * 的 pointermove 不会连续送达，但系统原生拖动始终可用。 */
+  -webkit-app-region: drag;
+  cursor: grab;
+  z-index: 2147483000;
+  cursor: move;
+  touch-action: none;
+  z-index: 20;
+}
+.ov-grip:active {
+  cursor: grabbing;
+}
+.ov-grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 7px;
   transform: translateX(-50%);
   width: 32px;
   height: 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  opacity: 0;
-  transition: opacity 200ms ease;
-  pointer-events: none;
-  z-index: 10;
+  background: rgba(255, 255, 255, 0.35);
 }
-.ov-shell:hover .ov-grip {
+.ov-shell:hover .ov-grip,
+.ov-grip:hover {
   opacity: 1;
+}
+
+/* 右下角拖拽缩放把手（仅在「悬浮窗允许鼠标调整」开启时渲染）。
+ * 用 position: fixed 贴住窗口视口右下角，避免窗口缩到很小时被内容裁掉。 */
+.ov-resize-handle {
+  position: fixed;
+  right: 4px;
+  bottom: 4px;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2147483000;
+}
+.ov-resize-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid rgba(255, 255, 255, 0.35);
+  border-bottom: 2px solid rgba(255, 255, 255, 0.35);
+  border-bottom-right-radius: 3px;
+}
+/* 右上角关闭按钮：与拖动/缩放同属「悬浮窗允许鼠标调整」开关 */
+.ov-close-btn {
+  position: fixed;
+  top: 4px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 12, 20, 0.55);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 140ms ease, background 140ms ease;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 2147483001;
+}
+.ov-close-btn:hover {
+  opacity: 1;
+  background: rgba(220, 60, 60, 0.75);
+  color: #fff;
+}
+
+.ov-shell:hover .ov-resize-handle::after {
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+/* 专注面板：顶部工具栏整条可拖动（通过 pointer 事件驱动，按钮保持可点击） */
+.ov-focus-toolbar {
+  cursor: move;
+}
+.ov-focus-toolbar button,
+.ov-focus-toolbar a,
+.ov-focus-toolbar input,
+.ov-focus-toolbar select,
+.ov-focus-toolbar [role='button'] {
+  cursor: pointer;
 }
 
 .ov-answer {

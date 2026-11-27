@@ -78,6 +78,10 @@ export interface AppConfig {
   candidate_mic_compatibility_mode?: boolean
   position: string
   language: string
+  /** 目标公司（选填，非技术岗/校招常用，用于回答公司了解与核心价值观问题） */
+  target_company?: string
+  /** tech=技术岗（默认）；general=非技术岗（管培生/运营/质检/销售等，行为面风格） */
+  interview_mode?: 'tech' | 'general'
   auto_detect: boolean
   silence_threshold: number
   silence_duration: number
@@ -90,6 +94,10 @@ export interface AppConfig {
   max_parallel_answers?: number
   /** 流式答案区：距底部小于该像素则自动滚到底 */
   answer_autoscroll_bottom_px?: number
+  /** 生成时是否自动跟随到底部；默认 false=固定在答案开头，按阅读顺序看 */
+  answer_autoscroll_follow?: boolean
+  /** true=宽松问句判定（长陈述句也提交，宁多答不漏答）；false=严格 */
+  assist_asr_question_relaxed?: boolean
   /** 转写有效字符下限（去标点后计汉字/字母/数字），低于则不展示、不自动答题 */
   transcription_min_sig_chars?: number
   /** 多段 ASR 合并：上一段结束后静默超过该秒数再送出；0=每段立即发送 */
@@ -175,6 +183,7 @@ export interface PlatformInfo {
 
 export interface OptionsInfo {
   positions: string[]
+  general_positions?: string[]
   languages: string[]
   stt_providers?: string[]
   whisper_models: string[]

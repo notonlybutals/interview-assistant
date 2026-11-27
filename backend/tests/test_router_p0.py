@@ -360,6 +360,79 @@ def test_update_config_rejects_invalid_screen_capture_region(monkeypatch):
     assert update_called is False
 
 
+def test_update_config_accepts_custom_position_and_language(monkeypatch):
+    """岗位/语言允许自定义（非技术岗、语言不限），不能因不在白名单而 422。"""
+
+    _stub_config_response(monkeypatch)
+
+    captured: dict[str, dict] = {}
+
+    def fake_update_config(d):
+        captured["d"] = dict(d)
+
+    async def fake_run_in_threadpool(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(common_router, "update_config", fake_update_config)
+    monkeypatch.setattr(common_router, "run_in_threadpool", fake_run_in_threadpool)
+
+    result = _run(
+        common_router.api_update_config(
+            _Body(position=" 酒店管培生 ", language="无")
+        )
+    )
+
+    assert result == {"ok": True}
+    assert captured["d"]["position"] == "酒店管培生"
+    assert captured["d"]["language"] == "无"
+
+
+def test_update_config_truncates_overlong_position_and_language(monkeypatch):
+    _stub_config_response(monkeypatch)
+
+    captured: dict[str, dict] = {}
+
+    def fake_update_config(d):
+        captured["d"] = dict(d)
+
+    async def fake_run_in_threadpool(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(common_router, "update_config", fake_update_config)
+    monkeypatch.setattr(common_router, "run_in_threadpool", fake_run_in_threadpool)
+
+    long_pos = "岗" * 100
+    long_lang = "语" * 100
+    _run(common_router.api_update_config(_Body(position=long_pos, language=long_lang)))
+
+    assert len(captured["d"]["position"]) == 60
+    assert len(captured["d"]["language"]) == 60
+
+
+def test_update_config_accepts_interview_mode(monkeypatch):
+    """岗位类型 tech/general 可保存；非法值明确 422。"""
+
+    _stub_config_response(monkeypatch)
+
+    captured: dict[str, dict] = {}
+
+    def fake_update_config(d):
+        captured["d"] = dict(d)
+
+    async def fake_run_in_threadpool(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(common_router, "update_config", fake_update_config)
+    monkeypatch.setattr(common_router, "run_in_threadpool", fake_run_in_threadpool)
+
+    _run(common_router.api_update_config(_Body(interview_mode=" GENERAL ")))
+    assert captured["d"]["interview_mode"] == "general"
+
+    with pytest.raises(HTTPException) as exc:
+        _run(common_router.api_update_config(_Body(interview_mode="unknown")))
+    assert exc.value.status_code == 422
+
+
 def test_update_config_treats_empty_enum_as_reset(monkeypatch):
     """空字符串视为「重置」, 应被 pop 掉 (而非 422), 让默认值生效。"""
 

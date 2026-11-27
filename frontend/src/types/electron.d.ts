@@ -2,6 +2,12 @@ import type { OverlayStatePayload } from '@/lib/interviewOverlay'
 
 export {}
 
+export interface WindowPrefsPayload {
+  showInTaskbar: boolean
+  contentProtection: boolean
+  overlayInteractive: boolean
+}
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -22,6 +28,12 @@ declare global {
       setShortcutsSuspended?: (on: boolean) => Promise<{ ok: boolean; suspended: boolean }>
       destroyOverlay?: () => Promise<{ ok: boolean }>
       moveOverlayWindow?: (dx: number, dy: number) => Promise<void>
+      moveOverlayBy?: (dx: number, dy: number) => Promise<{ ok: boolean }>
+      hideOverlay?: () => Promise<{ ok: boolean }>
+      resizeOverlayBy?: (dw: number, dh: number) => Promise<{ ok: boolean }>
+      getWindowPrefs?: () => Promise<WindowPrefsPayload>
+      setWindowPrefs?: (payload: Partial<WindowPrefsPayload>) => Promise<WindowPrefsPayload>
+      onWindowPrefs?: (callback: (payload: WindowPrefsPayload) => void) => (() => void)
       overlayDragStart?: () => void
       overlayDragEnd?: () => void
       getOverlayState?: () => Promise<(OverlayStatePayload & { visible: boolean }) | null>

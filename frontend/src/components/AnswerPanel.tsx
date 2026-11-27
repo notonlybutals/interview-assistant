@@ -293,9 +293,12 @@ export default function AnswerPanel() {
   const stream = answerPanelLayout === 'stream'
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const autoFollowRef = useRef(true)
+  const latestCardRef = useRef<HTMLDivElement>(null)
+  const lastQaCountRef = useRef(0)
+  const autoFollowRef = useRef(config?.answer_autoscroll_follow !== false)
 
   const scrollThreshold = Math.max(4, Math.min(400, config?.answer_autoscroll_bottom_px ?? 40))
+  const followWhileGenerating = config?.answer_autoscroll_follow !== false
   const [nearBottom, setNearBottom] = useState(true)
 
   const updateNearBottom = useCallback((fromUserScroll = true) => {
@@ -321,17 +324,38 @@ export default function AnswerPanel() {
   }, [updateNearBottom])
 
   useEffect(() => {
+    autoFollowRef.current = followWhileGenerating
+    if (followWhileGenerating) {
+      setNearBottom(true)
+    }
+  }, [followWhileGenerating])
+
+  useEffect(() => {
     const el = scrollContainerRef.current
     if (!el || !bottomRef.current) return
-    if (autoFollowRef.current) {
-      // Streaming/layout updates should never temporarily mark the user as
-      // scrolled away from the latest answer. `auto` also avoids intermediate
-      // scroll events from smooth scrolling toggling the follow state.
-      requestAnimationFrame(() => scrollToLatest('auto'))
-    } else {
-      setNearBottom(false)
+    if (followWhileGenerating) {
+      if (autoFollowRef.current) {
+        // Streaming/layout updates should never temporarily mark the user as
+        // scrolled away from the latest answer. `auto` also avoids intermediate
+        // scroll events from smooth scrolling toggling the follow state.
+        requestAnimationFrame(() => scrollToLatest('auto'))
+      } else {
+        setNearBottom(false)
+      }
+      return
     }
-  }, [qaPairs, streamingIds, scrollToLatest])
+    // 默认「固定在开头」：只有新答案出现时把它的第一行滚到视口顶部，
+    // 生成过程中不再自动滚动，用户可以按阅读顺序从第一行看。
+    const isNewAnswer = qaPairs.length > lastQaCountRef.current
+    lastQaCountRef.current = qaPairs.length
+    if (isNewAnswer && latestCardRef.current?.scrollIntoView) {
+      latestCardRef.current.scrollIntoView({ block: 'start', behavior: 'auto' })
+      autoFollowRef.current = false
+      setNearBottom(false)
+    } else {
+      setNearBottom(true)
+    }
+  }, [qaPairs, streamingIds, scrollToLatest, followWhileGenerating])
 
   useEffect(() => {
     const el = scrollContainerRef.current
@@ -340,7 +364,7 @@ export default function AnswerPanel() {
     const onScroll = () => updateNearBottom(true)
     el.addEventListener('scroll', onScroll, { passive: true })
     const ro = new ResizeObserver(() => {
-      if (autoFollowRef.current) {
+      if (followWhileGenerating && autoFollowRef.current) {
         requestAnimationFrame(() => scrollToLatest('auto'))
       } else {
         updateNearBottom(false)
@@ -454,15 +478,16 @@ export default function AnswerPanel() {
         // 只给最新一项播入场动画,避免历史项在 store 更新时反复重播
         const animate = isLatest
         return (
-          <QACard
-            key={qa.id}
-            qa={qa}
-            isStreaming={isStreaming}
-            stream={stream}
-            colorScheme={colorScheme}
-            animate={animate}
-            animateDelayMs={0}
-          />
+          <div key={qa.id} ref={isLatest ? latestCardRef : undefined}>
+            <QACard
+              qa={qa}
+              isStreaming={isStreaming}
+              stream={stream}
+              colorScheme={colorScheme}
+              animate={animate}
+              animateDelayMs={0}
+            />
+          </div>
         )
       })}
       <div ref={bottomRef} />
@@ -513,3 +538,4 @@ export default function AnswerPanel() {
     </div>
   )
 }
+
