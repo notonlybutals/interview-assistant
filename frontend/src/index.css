@@ -1196,11 +1196,12 @@ code, pre, .font-mono {
   opacity: 0;
   transition: opacity 200ms ease;
   pointer-events: auto;
-  /* 原生拖动区：比 JS 指针方案更可靠，隐藏/显示、失去焦点后仍然有效 */
-  -webkit-app-region: drag;
   cursor: move;
   touch-action: none;
   z-index: 20;
+}
+.ov-grip:active {
+  cursor: grabbing;
 }
 .ov-grip::after {
   content: '';
@@ -1274,9 +1275,8 @@ code, pre, .font-mono {
   border-color: rgba(255, 255, 255, 0.7);
 }
 
-/* 专注面板：顶部工具栏整条可拖动（按钮保持可点击） */
+/* 专注面板：顶部工具栏整条可拖动（通过 pointer 事件驱动，按钮保持可点击） */
 .ov-focus-toolbar {
-  -webkit-app-region: drag;
   cursor: move;
 }
 .ov-focus-toolbar button,
@@ -1284,7 +1284,7 @@ code, pre, .font-mono {
 .ov-focus-toolbar input,
 .ov-focus-toolbar select,
 .ov-focus-toolbar [role='button'] {
-  -webkit-app-region: no-drag;
+  cursor: pointer;
 }
 
 .ov-answer {

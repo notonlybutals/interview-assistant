@@ -12,7 +12,7 @@ from pydantic import BaseModel, ValidationError
 from core.auth import get_token, is_auth_disabled, is_loopback_host
 from core.config import (
     get_config, update_config,
-    POSITION_OPTIONS, LANGUAGE_OPTIONS, WHISPER_MODEL_OPTIONS, STT_PROVIDER_OPTIONS,
+    POSITION_OPTIONS, GENERAL_POSITION_OPTIONS, LANGUAGE_OPTIONS, WHISPER_MODEL_OPTIONS, STT_PROVIDER_OPTIONS,
     FUNASR_MODEL_OPTIONS,
     STT_FALLBACK_PROVIDER_OPTIONS,
     SCREEN_CAPTURE_REGION_OPTIONS,
@@ -74,6 +74,7 @@ class ConfigUpdate(BaseModel):
     doubao_stt_boosting_table_id: Optional[str] = None
     position: Optional[str] = None
     language: Optional[str] = None
+    target_company: Optional[str] = None
     interview_mode: Optional[str] = None
     auto_detect: Optional[bool] = None
     silence_threshold: Optional[float] = None
@@ -451,6 +452,8 @@ async def api_update_config(body: ConfigUpdate):
             d["position"] = str(d["position"] or "").strip()[:60]
         if "language" in d:
             d["language"] = str(d["language"] or "").strip()[:60]
+        if "target_company" in d:
+            d["target_company"] = str(d["target_company"] or "").strip()[:80]
         if "interview_mode" in d:
             mode = str(d["interview_mode"] or "").strip().lower()
             if mode not in ("tech", "general"):
@@ -515,6 +518,7 @@ async def api_network_info(request: Request):
 async def api_options():
     return {
         "positions": POSITION_OPTIONS,
+        "general_positions": GENERAL_POSITION_OPTIONS,
         "languages": LANGUAGE_OPTIONS,
         "stt_providers": STT_PROVIDER_OPTIONS,
         "whisper_models": WHISPER_MODEL_OPTIONS,

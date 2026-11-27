@@ -161,18 +161,19 @@ export default function InterviewOverlay() {
 
   const onGripPointerDown = (event: ReactType.PointerEvent<HTMLDivElement>) => {
     if (!overlayInteractive || !window.electronAPI?.moveOverlayBy) return
-    // 避免默认行为（pointer 事件本身不需要额外阻止）
-    (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
-    dragStateRef.current = { x: event.clientX, y: event.clientY }
+    const target = event.target as HTMLElement | null
+    if (target?.closest('button, a, input, select, [role="button"]:not(.ov-grip)')) return
+    ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
+    dragStateRef.current = { x: event.screenX, y: event.screenY }
   }
   const onGripPointerMove = (event: ReactType.PointerEvent<HTMLDivElement>) => {
     const state = dragStateRef.current
     if (!state) return
-    const dx = event.clientX - state.x
-    const dy = event.clientY - state.y
+    const dx = event.screenX - state.x
+    const dy = event.screenY - state.y
     if (!dx && !dy) return
-    state.x = event.clientX
-    state.y = event.clientY
+    state.x = event.screenX
+    state.y = event.screenY
     window.electronAPI?.moveOverlayBy?.(dx, dy).catch(() => {})
   }
   const onGripPointerUp = (event: ReactType.PointerEvent<HTMLDivElement>) => {
@@ -185,19 +186,17 @@ export default function InterviewOverlay() {
   }
   const onResizePointerDown = (event: ReactType.PointerEvent<HTMLDivElement>) => {
     if (!overlayInteractive || !window.electronAPI?.resizeOverlayBy) return
-    // 避免默认行为（pointer 事件本身不需要额外阻止）
-    // 避免默认行为（pointer 事件本身不需要额外阻止）
     ;(event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId)
-    resizeStateRef.current = { x: event.clientX, y: event.clientY }
+    resizeStateRef.current = { x: event.screenX, y: event.screenY }
   }
   const onResizePointerMove = (event: ReactType.PointerEvent<HTMLDivElement>) => {
     const state = resizeStateRef.current
     if (!state) return
-    const dw = event.clientX - state.x
-    const dh = event.clientY - state.y
+    const dw = event.screenX - state.x
+    const dh = event.screenY - state.y
     if (!dw && !dh) return
-    state.x = event.clientX
-    state.y = event.clientY
+    state.x = event.screenX
+    state.y = event.screenY
     window.electronAPI?.resizeOverlayBy?.(dw, dh).catch(() => {})
   }
   const onResizePointerUp = (event: ReactType.PointerEvent<HTMLDivElement>) => {
@@ -520,7 +519,14 @@ export default function InterviewOverlay() {
             onPointerCancel={onGripPointerUp}
             style={overlayInteractive ? undefined : { display: 'none' }}
           />
-          <div className="ov-focus-toolbar" aria-label="专注面板工具">
+          <div
+            className="ov-focus-toolbar"
+            aria-label="专注面板工具"
+            onPointerDown={onGripPointerDown}
+            onPointerMove={onGripPointerMove}
+            onPointerUp={onGripPointerUp}
+            onPointerCancel={onGripPointerUp}
+          >
             {focusTools.map((tool) => (
               <button
                 key={tool.key}
@@ -635,7 +641,16 @@ export default function InterviewOverlay() {
       className={`ov-root ${overlayMode === 'prompt' ? 'ov-root--prompt' : ''}`}
     >
       <div className={shellClass} style={overlayMode === 'prompt' ? promptShellStyle : { opacity, color: fontColor }}>
-        <div className="ov-grip" aria-hidden />
+        <div
+          className="ov-grip"
+          role="button"
+          aria-label="拖动悬浮窗"
+          onPointerDown={onGripPointerDown}
+          onPointerMove={onGripPointerMove}
+          onPointerUp={onGripPointerUp}
+          onPointerCancel={onGripPointerUp}
+          style={overlayInteractive ? undefined : { display: 'none' }}
+        />
 
         <div
           ref={answerScrollRef}

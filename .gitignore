@@ -111,3 +111,6 @@ pytest-of-*/
 
 # FunASR/ModelScope 本地模型缓存回退目录（~/.cache 不可写时使用）
 .modelscope-cache/
+
+# Test runtime logs
+backend/ia-test-logs/

@@ -55,6 +55,7 @@ def build_config_payload(cfg) -> dict:
         "candidate_mic_compatibility_mode": bool(getattr(cfg, "candidate_mic_compatibility_mode", True)),
         "position": cfg.position,
         "language": cfg.language,
+        "target_company": getattr(cfg, "target_company", "") or "",
         "interview_mode": getattr(cfg, "interview_mode", "tech") or "tech",
         "auto_detect": cfg.auto_detect,
         "silence_threshold": cfg.silence_threshold,

@@ -92,7 +92,8 @@ if (process.platform === 'win32') {
 //   A) 新版 electron-builder：resources/{python,backend,frontend/dist,backend-entry.py}
 //   B) 旧版自定义打包：resources/runtime/{python,backend,frontend/dist,start.py}
 // 两种都支持；开发态用仓库根目录。
-const ROOT = app.isPackaged
+const IS_PACKAGED = app.isPackaged;
+const ROOT = IS_PACKAGED
   ? (fs.existsSync(path.join(process.resourcesPath, 'runtime'))
     ? path.join(process.resourcesPath, 'runtime')
     : process.resourcesPath)
@@ -102,8 +103,15 @@ let SERVER_URL = `http://127.0.0.1:${PORT}`;
 // 注意：不要在这里 app.setPath('userData', ...)。Chromium 的单实例锁在很早期创建，
 // 强制改 userData 到 %APPDATA%\InterviewAssistant 会让锁文件创建失败（Error code: 5），
 // 进程直接退出（安装版双击无反应）。沿用默认 userData（%APPDATA%/<package name>）即可。
-const hasInstanceLock = !app.isPackaged || app.requestSingleInstanceLock();
-if (!hasInstanceLock) app.quit();
+// 单实例锁：Chromium 在个别 Windows 环境可能创建锁失败（Error code: 5）并返回
+// false。不能直接 app.quit()（会导致双击无反应）；whenReady 里再探测是否真的
+// 已有实例在监听，只有确认另一实例运行时才退出。
+let hasInstanceLock = true;
+try {
+  hasInstanceLock = app.requestSingleInstanceLock();
+} catch {
+  hasInstanceLock = true;
+}
 app.on('second-instance', () => {
   mainWindow?.show();
   mainWindow?.focus();
@@ -137,10 +145,11 @@ let lastOverlayState = {
   maxLines: 0,
 };
 
-// 窗口偏好（任务栏显示 / 屏幕共享隐身 / 悬浮窗可拖动缩放）：默认在任务栏显示，
-// 用户随时能找回窗口；需要隐身时可在设置或托盘菜单关闭。持久化到 userData。
-let windowPrefs = { showInTaskbar: true, contentProtection: true, overlayInteractive: true };
+// 窗口偏好（屏幕共享隐身 / 悬浮窗可拖动缩放）：主窗口在 Windows 下默认不在任务栏显示（skipTaskbar: true），
+// 最小化后收进右下角系统托盘（^ 向上箭头隐藏图标区）。偏好持久化到 userData。
+let windowPrefs = { showInTaskbar: false, contentProtection: true, overlayInteractive: true };
 let trayHintShown = false;
+let trayAvailable = true;
 
 function getWindowPrefsFilePath() {
   return path.join(app.getPath('userData'), 'window-prefs.json');
@@ -152,7 +161,7 @@ function loadWindowPrefs() {
     const data = JSON.parse(raw);
     if (data && typeof data === 'object') {
       windowPrefs = {
-        showInTaskbar: data.showInTaskbar !== false,
+        showInTaskbar: false,
         contentProtection: data.contentProtection !== false,
         overlayInteractive: data.overlayInteractive !== false,
       };
@@ -185,35 +194,8 @@ function applyContentProtection(enabled) {
 }
 
 function applyShowInTaskbar(enabled) {
-  const next = Boolean(enabled);
-  if (process.platform === 'win32' && !next && mainWindow && !mainWindow.isDestroyed()) {
-    // 这台机器上出现过「托盘图标不可见 + 关掉任务栏 = 窗口彻底消失」的情况，
-    // 关闭前明确警告一次，并提供取消。
-    try {
-      const { dialog } = require('electron');
-      const choice = dialog.showMessageBoxSync(mainWindow, {
-        type: 'warning',
-        buttons: ['仍然关闭（之后按 Ctrl+B 找回）', '取消'],
-        defaultId: 1,
-        cancelId: 1,
-        title: '关闭「在任务栏显示」',
-        message: '关闭后，最小化会隐藏到托盘。',
-        detail: '如果本机托盘图标不可见，窗口将只能通过 Ctrl+B 快捷键找回。确定继续吗？',
-      });
-      if (choice !== 0) return;
-    } catch {
-      /* ignore */
-    }
-  }
-  windowPrefs.showInTaskbar = next;
+  windowPrefs.showInTaskbar = Boolean(enabled);
   if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
-    // 托盘没建起来时不允许把任务栏也关掉，否则窗口会彻底消失、只能靠快捷键找回。
-    if (!windowPrefs.showInTaskbar && !tray) {
-      windowPrefs.showInTaskbar = true;
-      mainWindow.setSkipTaskbar(false);
-      saveWindowPrefs();
-      return;
-    }
     mainWindow.setSkipTaskbar(!windowPrefs.showInTaskbar);
   }
   saveWindowPrefs();
@@ -337,6 +319,17 @@ function getDefaultOverlayBounds() {
 }
 
 function getFocusOverlayBounds() {
+  const saved = loadOverlayWindowState();
+  const storedSize = saved?.position;
+  const storedPos = getStoredOverlayPosition();
+  if (saved?.manualSize && storedPos && storedSize?.w > 0 && storedSize?.h > 0) {
+    return {
+      x: storedPos.x,
+      y: storedPos.y,
+      width: Math.max(OVERLAY_PRESET.minWidth, storedSize.w),
+      height: Math.max(OVERLAY_PRESET.minHeight, storedSize.h),
+    };
+  }
   const canUseOverlayBounds = overlayWindow
     && !overlayWindow.isDestroyed()
     && (typeof overlayWindow.isVisible !== 'function' || overlayWindow.isVisible());
@@ -354,8 +347,8 @@ function getFocusOverlayBounds() {
   const width = Math.round((area.width - margin * 2) * (widthPct / 100));
   const height = Math.round((area.height - margin * 2) * (heightPct / 100));
   return {
-    x: area.x + margin + Math.max(0, Math.round(((area.width - margin * 2) - width) / 2)),
-    y: area.y + margin + Math.max(0, Math.round(((area.height - margin * 2) - height) / 2)),
+    x: storedPos ? storedPos.x : (area.x + margin + Math.max(0, Math.round(((area.width - margin * 2) - width) / 2))),
+    y: storedPos ? storedPos.y : (area.y + margin + Math.max(0, Math.round(((area.height - margin * 2) - height) / 2))),
     width: Math.max(OVERLAY_PRESET.minWidth, width),
     height: Math.max(OVERLAY_PRESET.minHeight, height),
   };
@@ -365,14 +358,12 @@ function getNormalOverlayBounds(mode) {
   const storedPos = getStoredOverlayPosition();
   const saved = loadOverlayWindowState();
   const storedSize = saved?.position;
-  const minOverlayWidth = OVERLAY_PRESET.minWidth || OVERLAY_PRESET.width;
-  const minOverlayHeight = OVERLAY_PRESET.minHeight || OVERLAY_PRESET.height;
-  // prompt 模式宽度由内容自适应驱动 (受 promptMaxWidth 约束), 旧物理 position.w 无意义;
-  // 直接用 promptMaxWidth 作初始宽, 避免重开时先显示旧值再被前端收窄/撑开。
+  const minOverlayWidth = mode === 'prompt' ? PROMPT_OVERLAY_MIN_SIZE.width : (OVERLAY_PRESET.minWidth || OVERLAY_PRESET.width);
+  const minOverlayHeight = mode === 'prompt' ? PROMPT_OVERLAY_MIN_SIZE.height : (OVERLAY_PRESET.minHeight || OVERLAY_PRESET.height);
   let width;
   let height;
-  if (mode === 'prompt') {
-    width = getPromptOverlayInitialWidth(lastOverlayState?.promptMaxWidth);
+  if (mode === 'prompt' && !saved?.manualSize) {
+    width = (storedSize?.w > 0) ? Math.max(storedSize.w, minOverlayWidth) : getPromptOverlayInitialWidth(lastOverlayState?.promptMaxWidth);
     height = Math.max((storedSize?.h > 0) ? storedSize.h : OVERLAY_PRESET.height, minOverlayHeight);
   } else {
     width = Math.max((storedSize?.w > 0) ? storedSize.w : OVERLAY_PRESET.width, minOverlayWidth);
@@ -396,15 +387,17 @@ function applyOverlayModeBounds() {
   overlayWindow.setBounds(bounds, false);
 }
 
-function persistOverlayPosition(force = false) {
+function persistOverlayPosition(force = false, manualSize = null) {
   if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  if (lastOverlayState?.mode === 'focus') return;
   // fuse 屏蔽窗口 resize/moved 事件在程序化 setBounds 后 500ms 内的频繁写盘;
-  // force=true 用于程序化设尺寸后的显式落盘 (来自 resize-overlay-window IPC), 绕过 fuse。
+  // force=true 用于程序化设尺寸或手动拖拽后的显式落盘，绕过 fuse。
   if (!force && Date.now() < overlayAutoResizeUntil) return;
   const bounds = overlayWindow.getBounds();
   const saved = loadOverlayWindowState();
   saved.position = { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height };
+  if (typeof manualSize === 'boolean') {
+    saved.manualSize = manualSize;
+  }
   saveOverlayWindowState(saved);
 }
 
@@ -441,6 +434,26 @@ function createTrayIcon() {
     }
   }
   return nativeImage.createFromBuffer(buf, { width: size, height: size });
+}
+
+function probeExistingInstance(url, timeout = 800) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const req = http.get(`${url}/api/options`, { timeout }, (res) => {
+      res.resume();
+      done(res.statusCode === 200);
+    });
+    req.on('error', () => done(false));
+    req.on('timeout', () => {
+      try { req.destroy(); } catch (_) { /* ignore */ }
+      done(false);
+    });
+  });
 }
 
 function waitForServer(timeout = 40000) {
@@ -494,11 +507,23 @@ function killPortWindows(port) {
   }
 }
 
+function ensureWritableDir(dir) {
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-probe-${process.pid}`);
+    fs.writeFileSync(probe, '');
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function startPythonBackend() {
   let python = process.platform === 'win32' ? 'python' : 'python3';
   let args = [path.join(ROOT, 'start.py'), '--mode', 'network', '--no-build', '--port', String(PORT)];
   const env = { ...process.env };
-  if (app.isPackaged) {
+  if (IS_PACKAGED) {
     // 清掉端口占用（例如残留的旧版进程），避免 waitForServer 连到旧后端起窗口。
     killPortWindows(PORT);
     python = path.join(ROOT, 'python', process.platform === 'win32' ? 'python.exe' : path.join('bin', 'python3'));
@@ -506,23 +531,38 @@ function startPythonBackend() {
     if (fs.existsSync(bundledEntry)) {
       args = ['-I', '-B', '-u', bundledEntry, String(PORT)];
     } else {
-      // 旧 runtime 布局：用 start.py 的 network 模式（不依赖 backend-entry.py）。
       args = [path.join(ROOT, 'start.py'), '--mode', 'network', '--no-build', '--port', String(PORT)];
     }
     const userDir = app.getPath('userData');
-    const dataRoot = path.join(userDir, 'backend');
-    fs.mkdirSync(dataRoot, { recursive: true });
-    const configPath = path.join(dataRoot, 'config.json');
-    if (!fs.existsSync(configPath)) {
-      fs.copyFileSync(path.join(ROOT, 'backend', 'config.example.json'), configPath);
+    // 少数机器安全软件会禁止应用在 %APPDATA% 下新建目录/文件；回退到安装目录，
+    // 保证数据库和日志仍可写入（安装目录由安装器创建，通常可写）。
+    let dataRoot = path.join(userDir, 'backend');
+    if (!ensureWritableDir(path.join(dataRoot, 'data'))) {
+      dataRoot = path.join(ROOT, 'backend');
+      ensureWritableDir(path.join(dataRoot, 'data'));
     }
+    const configPath = path.join(dataRoot, 'config.json');
+    try {
+      fs.mkdirSync(dataRoot, { recursive: true });
+      if (!fs.existsSync(configPath)) {
+        fs.copyFileSync(path.join(ROOT, 'backend', 'config.example.json'), configPath);
+      }
+    } catch (error) {
+      console.warn('prepare user config failed:', error?.message || error);
+    }
+    const preferredLogDir = path.join(userDir, 'log');
+    const logDir = ensureWritableDir(preferredLogDir) ? preferredLogDir : path.join(ROOT, 'log');
+    ensureWritableDir(logDir);
     Object.assign(env, {
       IA_CONFIG_PATH: configPath,
       IA_BACKEND_DATA_ROOT: dataRoot,
-      IA_LOG_DIR: path.join(userDir, 'log'),
+      IA_LOG_DIR: logDir,
       IA_FRONTEND_DIR: path.join(ROOT, 'frontend', 'dist'),
       IA_STT_LAZY_START: '1',
-      NUMBA_CACHE_DIR: path.join(userDir, 'cache', 'numba'),
+      NUMBA_CACHE_DIR: (() => {
+        const dir = path.join(userDir, 'cache', 'numba');
+        return ensureWritableDir(dir) ? dir : path.join(ROOT, 'cache', 'numba');
+      })(),
     });
   }
   if (!String(env.HF_ENDPOINT || '').trim()) env.HF_ENDPOINT = 'https://hf-mirror.com';
@@ -535,11 +575,17 @@ function startPythonBackend() {
 
   relayChildOutput(pythonProcess.stdout, process.stdout, '[py] ');
   relayChildOutput(pythonProcess.stderr, process.stderr, '[py] ');
-  if (app.isPackaged) {
-    fs.mkdirSync(env.IA_LOG_DIR, { recursive: true });
-    const logPath = path.join(env.IA_LOG_DIR, 'backend-startup.log');
-    for (const stream of [pythonProcess.stdout, pythonProcess.stderr]) {
-      stream.on('data', (data) => fs.appendFileSync(logPath, data));
+  if (IS_PACKAGED) {
+    try {
+      fs.mkdirSync(env.IA_LOG_DIR, { recursive: true });
+      const logPath = path.join(env.IA_LOG_DIR, 'backend-startup.log');
+      for (const stream of [pythonProcess.stdout, pythonProcess.stderr]) {
+        stream.on('data', (data) => {
+          try { fs.appendFileSync(logPath, data); } catch { /* ignore log write failures */ }
+        });
+      }
+    } catch (error) {
+      console.warn('prepare backend log failed:', error?.message || error);
     }
   }
   pythonProcess.on('error', (error) => {
@@ -603,10 +649,9 @@ function createWindow() {
     mainWindow.show();
   });
 
-  // Windows 下最小化：任务栏可见时正常最小化（用户点任务栏能还原）；
-  // 只有关闭「在任务栏显示」的隐身模式才最小化到托盘。
+  // Windows 下最小化 = 隐藏到右下角系统托盘（^ 向上箭头隐藏图标区）
   mainWindow.on('minimize', (e) => {
-    if (process.platform === 'win32' && !windowPrefs.showInTaskbar) {
+    if (process.platform === 'win32' && trayAvailable) {
       e.preventDefault();
       mainWindow.hide();
       showTrayHintOnce();
@@ -701,6 +746,11 @@ function createOverlayWindow() {
   });
   overlayWindow.on('show', () => {
     if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    try {
+      overlayWindow.setOpacity(1);
+    } catch {
+      /* ignore */
+    }
     overlayWindow.setContentProtection(windowPrefs.contentProtection);
     overlayWindow.setBackgroundColor('#00000000');
     overlayWindow.setFocusable(false);
@@ -754,19 +804,26 @@ function closeOverlayAndPersist() {
     appendOverlayDebug(`persist position before close failed: ${error?.message || error}`);
   }
   overlayWindow._pendingShow = false;
-  overlayWindow.destroy();
-  overlayWindow = null;
+  // Windows 上透明无边框置顶窗口如果只用 hide()，DWM 合成层有时会残留最后一帧虚影；
+  // 先设为完全透明再 hide()，既能消除 DWM 残影，又能保留 BrowserWindow 实例，
+  // 下次按 Ctrl+O 直接 applyOverlayModeBounds() + showInactive() 即可毫秒级秒开。
+  try {
+    overlayWindow.setOpacity(0);
+  } catch {
+    /* ignore */
+  }
+  overlayWindow.hide();
 }
 
 function preheatOverlaySoon() {
-  // 关闭后后台预建一个隐藏的 overlay，下次 Ctrl+O 打开可即时显示（不用等页面加载）。
+  // 如果悬浮窗实例因异常被销毁，后台补建一个隐藏实例。
   setTimeout(() => {
     try {
       if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
     } catch (error) {
       appendOverlayDebug(`overlay preheat failed: ${error?.message || error}`);
     }
-  }, 500);
+  }, 200);
 }
 
 function showOverlayWindow() {
@@ -777,6 +834,11 @@ function showOverlayWindow() {
   appendOverlayDebug(`showOverlayWindow visible=${Boolean(lastOverlayState?.visible)} ready=${Boolean(overlayWindow._overlayReady)}`);
   if (!lastOverlayState?.visible) {
     overlayWindow._pendingShow = false;
+    try {
+      overlayWindow.setOpacity(0);
+    } catch {
+      /* ignore */
+    }
     overlayWindow.hide();
     return;
   }
@@ -785,6 +847,11 @@ function showOverlayWindow() {
     return;
   }
   applyOverlayModeBounds();
+  try {
+    overlayWindow.setOpacity(1);
+  } catch {
+    /* ignore */
+  }
   overlayWindow.setFocusable(false);
   if (process.platform === 'darwin' || process.platform === 'win32') {
     overlayWindow.showInactive();
@@ -945,6 +1012,28 @@ function createTray() {
     tray = new Tray(icon);
     tray.setToolTip(APP_DISPLAY_NAME);
     appendTrayLog(`tray created size=${JSON.stringify(icon.getSize())}`);
+    trayAvailable = true;
+    // Windows Shell 的 NIM_ADD 失败不会让 new Tray 抛异常，只能通过原生查询确认。
+    // 查询失败时退回任务栏，避免窗口最小化后彻底找不回来。
+    setTimeout(() => {
+      if (!tray || tray.isDestroyed()) return;
+      let bounds = null;
+      try {
+        bounds = tray.getBounds();
+      } catch {
+        bounds = null;
+      }
+      if (!bounds || !bounds.width || !bounds.height) {
+        trayAvailable = false;
+        windowPrefs.showInTaskbar = true;
+        if (mainWindow && !mainWindow.isDestroyed() && process.platform === 'win32') {
+          mainWindow.setSkipTaskbar(false);
+        }
+        appendTrayLog(`tray bounds unavailable (${JSON.stringify(bounds)}); fallback to taskbar`);
+      } else {
+        appendTrayLog(`tray bounds ok (${JSON.stringify(bounds)})`);
+      }
+    }, 1500);
 
     const contextMenu = Menu.buildFromTemplate([
       { label: '显示窗口', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
@@ -959,12 +1048,6 @@ function createTray() {
         click: () => shortcutCallbacks.moveOverlayToMouse(),
       },
       { type: 'separator' },
-      {
-        label: '在任务栏显示',
-        type: 'checkbox',
-        checked: Boolean(windowPrefs.showInTaskbar),
-        click: (menuItem) => applyShowInTaskbar(menuItem.checked),
-      },
       {
         label: '窗口置顶',
         type: 'checkbox',
@@ -1328,8 +1411,9 @@ ipcMain.handle('overlay-move-by', (_event, dx, dy) => {
   const stepY = Math.round(Number(dy) || 0);
   if (!stepX && !stepY) return { ok: true };
   const [x, y] = overlayWindow.getPosition();
+  overlayAutoResizeUntil = Date.now() + 500;
   overlayWindow.setPosition(x + stepX, y + stepY);
-  schedulePersistOverlayPosition(true);
+  persistOverlayPosition(true);
   return { ok: true };
 });
 ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
@@ -1345,13 +1429,14 @@ ipcMain.handle('overlay-resize-by', (_event, dw, dh) => {
   const work = display.workArea;
   const nextWidth = Math.max(240, Math.min(work.width, bounds.width + stepW));
   const nextHeight = Math.max(100, Math.min(work.height, bounds.height + stepH));
+  overlayAutoResizeUntil = Date.now() + 500;
   overlayWindow.setBounds({
     x: bounds.x,
     y: bounds.y,
     width: nextWidth,
     height: nextHeight,
   });
-  schedulePersistOverlayPosition(true);
+  persistOverlayPosition(true, true);
   return { ok: true };
 });
 ipcMain.handle('overlay-hide', () => {
@@ -1391,6 +1476,13 @@ ipcMain.handle('sync-overlay-window', (_event, payload = {}) => {
   if ('mode' in payload && ['glass', 'prompt', 'focus'].includes(payload.mode)) {
     style.mode = payload.mode;
     style.showBg = payload.mode !== 'prompt';
+    if (payload.mode !== lastOverlayState.mode) {
+      const saved = loadOverlayWindowState();
+      if (saved.manualSize) {
+        saved.manualSize = false;
+        saveOverlayWindowState(saved);
+      }
+    }
   } else if ('showBg' in style && !('mode' in payload)) {
     style.mode = style.showBg ? 'glass' : 'prompt';
   }
@@ -1445,10 +1537,7 @@ ipcMain.handle('sync-overlay-window', (_event, payload = {}) => {
   }
 
   if (!state.visible) {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow._pendingShow = false;
-      overlayWindow.hide();
-    }
+    closeOverlayAndPersist();
     return { ok: true, visible: false };
   }
 
@@ -1486,6 +1575,8 @@ ipcMain.handle('resize-overlay-window', (_event, payload = {}) => {
   if (!overlayWindow || overlayWindow.isDestroyed()) return { ok: false };
   const mode = lastOverlayState?.mode || (lastOverlayState?.showBg === false ? 'prompt' : 'glass');
   if (mode !== 'prompt') return { ok: true, skipped: true };
+  const saved = loadOverlayWindowState();
+  if (saved?.manualSize) return { ok: true, skipped: true };
 
   const bounds = overlayWindow.getBounds();
   const center = {
@@ -1630,14 +1721,22 @@ app.on('before-quit', (event) => {
 });
 
 app.whenReady().then(async () => {
-  if (!hasInstanceLock) return;
   try {
     app.setName(APP_DISPLAY_NAME);
   } catch {
     /* 个别平台/版本可能不支持 */
   }
+  if (!hasInstanceLock) {
+    const alreadyRunning = await probeExistingInstance(SERVER_URL);
+    if (alreadyRunning) {
+      appendOverlayDebug('another instance is already running; quit this one');
+      app.quit();
+      return;
+    }
+    appendOverlayDebug('single-instance lock unavailable but no running instance; continuing');
+  }
   createAppMenu();
-  if (app.isPackaged) {
+  if (IS_PACKAGED) {
     // A packaged app must coexist with an already running source checkout.
     PORT = await new Promise((resolve, reject) => {
       const probe = net.createServer();

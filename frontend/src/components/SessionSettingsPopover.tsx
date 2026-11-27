@@ -3,6 +3,7 @@ import {
   ChevronDown,
   Sparkles,
   Briefcase,
+  Building2,
   Languages,
   Coins,
   X,
@@ -39,12 +40,25 @@ export default function SessionSettingsPopover({
   )
 
   const popoverRef = useRef<HTMLDivElement>(null)
+  const techProfileRef = useRef({ position: '后端开发', language: 'Python' })
   const [editingPos, setEditingPos] = useState(false)
   const [editingLang, setEditingLang] = useState(false)
+  const [editingCompany, setEditingCompany] = useState(false)
   const [posInput, setPosInput] = useState('')
   const [langInput, setLangInput] = useState('')
+  const [companyInput, setCompanyInput] = useState('')
   const [posError, setPosError] = useState('')
   const [langError, setLangError] = useState('')
+  const [companyError, setCompanyError] = useState('')
+  const isGeneralMode = (config?.interview_mode ?? 'tech') === 'general'
+  useEffect(() => {
+    if (!isGeneralMode && config) {
+      techProfileRef.current = {
+        position: config.position || '后端开发',
+        language: config.language || 'Python',
+      }
+    }
+  }, [isGeneralMode, config])
 
   useEffect(() => {
     if (!open) return
@@ -104,6 +118,38 @@ export default function SessionSettingsPopover({
       setEditingLang(true)
     }
   }
+  const saveCompany = async (val: string) => {
+    const v = val.trim()
+    setEditingCompany(false)
+    if (v === (config?.target_company ?? '')) {
+      setCompanyError('')
+      return
+    }
+    try {
+      await updateConfigAndRefresh({ target_company: v })
+      setCompanyError('')
+    } catch (err) {
+      setCompanyError(err instanceof Error ? err.message : '保存失败，请重试')
+      setEditingCompany(true)
+    }
+  }
+
+  const DEFAULT_GENERAL_POSITIONS = [
+    '管理培训生（管培生）',
+    '酒店管培生',
+    '质量管理 / 质检工程师（QC/QA）',
+    '食品研发 / 检测分析员',
+    '环境工程 / EHS工程师',
+    '实验室管理员 / 科研助理',
+    '运营专员 / 市场营销',
+    '供应链 / 采购物流管培生',
+    '人力资源 / 行政管培生',
+    '客户经理 / 销售管培生',
+    '项目专员 / 综合管理',
+  ]
+  const activePositions = isGeneralMode
+    ? (options?.general_positions?.length ? options.general_positions : DEFAULT_GENERAL_POSITIONS)
+    : (options?.positions ?? [])
 
   const tokenByModel = Object.entries(tokenUsage.byModel || {}).map(([name, v]) => [
     name,
@@ -215,7 +261,24 @@ export default function SessionSettingsPopover({
                   aria-pressed={active}
                   onClick={() => {
                     if (active) return
-                    void updateConfigAndRefresh({ interview_mode: value })
+                    if (value === 'general') {
+                      techProfileRef.current = {
+                        position: config?.position || '后端开发',
+                        language: config?.language || 'Python',
+                      }
+                      void updateConfigAndRefresh({
+                        interview_mode: 'general',
+                        position: DEFAULT_GENERAL_POSITIONS[0],
+                        language: '无',
+                        target_company: '',
+                      })
+                    } else {
+                      void updateConfigAndRefresh({
+                        interview_mode: 'tech',
+                        position: techProfileRef.current.position,
+                        language: techProfileRef.current.language,
+                      })
+                    }
                   }}
                   className={`text-xs rounded-lg px-2.5 py-2 border transition-colors ${
                     active
@@ -282,12 +345,12 @@ export default function SessionSettingsPopover({
                 }}
                 className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 focus:outline-none focus:border-accent-blue/60 transition-colors"
               >
-                {(options?.positions ?? []).map((p) => (
+                {activePositions.map((p) => (
                   <option key={p} value={p}>
                     {p}
                   </option>
                 ))}
-                {config?.position && !(options?.positions ?? []).includes(config.position) && (
+                {config?.position && !activePositions.includes(config.position) && (
                   <option value={config.position}>{config.position}</option>
                 )}
                 <option value="__custom__">自定义...</option>
@@ -310,81 +373,160 @@ export default function SessionSettingsPopover({
           )}
         </section>
 
-        {/* ── 语言 ── */}
-        <section>
-          <label className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-text-muted uppercase mb-1.5">
-            <Languages className="w-3 h-3" />
-            目标语言
-          </label>
-          {editingLang ? (
-            <div className="flex items-center gap-1.5">
-              <input
-                value={langInput}
-                onChange={(e) => setLangInput(e.target.value)}
-                autoFocus
-                onKeyDown={(e) => {
-                  if (e.nativeEvent.isComposing) return
-                  if (e.key === 'Enter') {
+        {/* ── 非技术岗：目标公司；技术岗：目标语言 ── */}
+        {isGeneralMode ? (
+          <section>
+            <label className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-text-muted uppercase mb-1.5">
+              <Building2 className="w-3 h-3" />
+              目标公司（选填）
+            </label>
+            {editingCompany ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={companyInput}
+                  onChange={(e) => setCompanyInput(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return
+                    if (e.key === 'Enter') {
+                      void saveCompany(companyInput)
+                    }
+                    if (e.key === 'Escape') setEditingCompany(false)
+                  }}
+                  placeholder="如：伊利、中粮、华测检测、万豪（可留空）"
+                  className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-accent-blue/60 focus:outline-none focus:border-accent-blue"
+                />
+                <button
+                  type="button"
+                  onClick={() => void saveCompany(companyInput)}
+                  className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
+                  aria-label="确认"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompanyInput(config?.target_company ?? '')
+                    setEditingCompany(true)
+                  }}
+                  className="flex-1 text-left bg-bg-tertiary/60 text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 hover:border-accent-blue/50 transition-colors truncate"
+                >
+                  {config?.target_company ? (
+                    <span className="text-text-primary">{config.target_company}</span>
+                  ) : (
+                    <span className="text-text-muted">点击填写目标公司（如：中粮 / 华测检测 / 万豪）</span>
+                  )}
+                </button>
+                {config?.target_company && (
+                  <button
+                    type="button"
+                    onClick={() => void saveCompany('')}
+                    title="清空目标公司"
+                    className="p-2 rounded-lg text-text-muted hover:text-red-400 hover:bg-bg-tertiary/50 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompanyInput(config?.target_company ?? '')
+                    setEditingCompany(true)
+                  }}
+                  title="编辑目标公司"
+                  className="p-2 rounded-lg text-text-muted hover:text-accent-blue hover:bg-bg-tertiary/50 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            <p className="mt-1 text-[10px] text-text-muted leading-relaxed">
+              填写后，被问到「对我们公司有什么了解/为什么选我们/企业文化价值观」时，模型会自动结合该公司背景与简历作答。
+            </p>
+            {companyError && (
+              <p className="mt-1 text-[10px] text-red-400">{companyError}</p>
+            )}
+          </section>
+        ) : (
+          <section>
+            <label className="flex items-center gap-1.5 text-[10px] font-semibold tracking-wider text-text-muted uppercase mb-1.5">
+              <Languages className="w-3 h-3" />
+              目标语言
+            </label>
+            {editingLang ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={langInput}
+                  onChange={(e) => setLangInput(e.target.value)}
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return
+                    if (e.key === 'Enter') {
+                      if (langInput.trim()) void saveLang(langInput.trim())
+                      else setEditingLang(false)
+                    }
+                    if (e.key === 'Escape') setEditingLang(false)
+                  }}
+                  placeholder="输入自定义语言（可填：无）"
+                  className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-accent-blue/60 focus:outline-none focus:border-accent-blue"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
                     if (langInput.trim()) void saveLang(langInput.trim())
                     else setEditingLang(false)
-                  }
-                  if (e.key === 'Escape') setEditingLang(false)
-                }}
-                placeholder="输入自定义语言（可填：无）"
-                className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-accent-blue/60 focus:outline-none focus:border-accent-blue"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  if (langInput.trim()) void saveLang(langInput.trim())
-                  else setEditingLang(false)
-                }}
-                className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
-                aria-label="确认"
-              >
-                <Check className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <select
-                value={config?.language ?? ''}
-                onChange={(e) => {
-                  if (e.target.value === '__custom__') {
-                    setLangInput('')
+                  }}
+                  className="p-2 rounded-lg bg-accent-blue/15 text-accent-blue hover:bg-accent-blue/25 transition-colors"
+                  aria-label="确认"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <select
+                  value={config?.language ?? ''}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setLangInput('')
+                      setEditingLang(true)
+                    } else void saveLang(e.target.value)
+                  }}
+                  className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 focus:outline-none focus:border-accent-blue/60 transition-colors"
+                >
+                  {(options?.languages ?? []).map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
+                  <option value="无">无（不限）</option>
+                  {config?.language && !(options?.languages ?? []).includes(config.language) && config.language !== '无' && (
+                    <option value={config.language}>{config.language}</option>
+                  )}
+                  <option value="__custom__">自定义...</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLangInput(config?.language ?? '')
                     setEditingLang(true)
-                  } else void saveLang(e.target.value)
-                }}
-                className="flex-1 bg-bg-tertiary/60 text-text-primary text-xs rounded-lg px-2.5 py-2 border border-bg-hover/50 focus:outline-none focus:border-accent-blue/60 transition-colors"
-              >
-                {(options?.languages ?? []).map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-                <option value="无">无（不限）</option>
-                {config?.language && !(options?.languages ?? []).includes(config.language) && config.language !== '无' && (
-                  <option value={config.language}>{config.language}</option>
-                )}
-                <option value="__custom__">自定义...</option>
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  setLangInput(config?.language ?? '')
-                  setEditingLang(true)
-                }}
-                title="自定义语言"
-                className="p-2 rounded-lg text-text-muted hover:text-accent-blue hover:bg-bg-tertiary/50 transition-colors"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-          {langError && (
-            <p className="mt-1 text-[10px] text-red-400">{langError}</p>
-          )}
-        </section>
+                  }}
+                  title="自定义语言"
+                  className="p-2 rounded-lg text-text-muted hover:text-accent-blue hover:bg-bg-tertiary/50 transition-colors"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {langError && (
+              <p className="mt-1 text-[10px] text-red-400">{langError}</p>
+            )}
+          </section>
+        )}
 
         {/* ── Token 用量 ── */}
         <section className="rounded-xl border border-bg-hover/40 bg-bg-tertiary/25 p-3">

@@ -1,5 +1,5 @@
 appId: io.github.walnut233.interviewassistant
-productName: 智能面试学习辅助助手
+productName: InterviewAssistant
 executableName: InterviewAssistant
 electronDist: node_modules/electron/dist
 asar: true
@@ -44,6 +44,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  shortcutName: 面试学习助手
   deleteAppDataOnUninstall: false
   differentialPackage: false
   useZip: true

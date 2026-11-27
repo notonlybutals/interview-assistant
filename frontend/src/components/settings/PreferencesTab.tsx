@@ -375,14 +375,9 @@ export default function PreferencesTab({ variant = 'main' }: { variant?: 'main' 
         </Field>
       </Section>
 
-      <Section title="窗口与截图" icon={<Monitor className="w-3.5 h-3.5" />} keywords="任务栏 托盘 截图 隐身 悬浮窗 拖动 缩放 window taskbar screenshot overlay resize">
+      <Section title="窗口与截图" icon={<Monitor className="w-3.5 h-3.5" />} keywords="托盘 截图 隐身 悬浮窗 拖动 缩放 window screenshot overlay resize">
         {windowPrefs ? (
           <div className="space-y-2.5">
-            <Toggle
-              checked={windowPrefs.showInTaskbar}
-              onChange={(value) => { void updateWindowPrefs({ showInTaskbar: value }) }}
-              label="在任务栏显示主窗口（关闭后只在托盘；最小化会隐藏）"
-            />
             <Toggle
               checked={!windowPrefs.contentProtection}
               onChange={(value) => { void updateWindowPrefs({ contentProtection: !value }) }}
@@ -394,7 +389,7 @@ export default function PreferencesTab({ variant = 'main' }: { variant?: 'main' 
               label="悬浮窗允许鼠标拖动/缩放（关闭则保持只读隐身形态）"
             />
             <p className="text-[10px] text-text-muted leading-relaxed">
-              这些是本机窗口偏好，保存在用户数据目录，不需要保存按钮。
+              主窗口最小化后会隐藏到右下角系统托盘（点击 ^ 向上箭头里的图标或按 Ctrl+B 可重新打开）。
             </p>
           </div>
         ) : (

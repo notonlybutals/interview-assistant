@@ -75,6 +75,14 @@ TECH_VOCAB = {
         "ETL 数据仓库 数据湖 ODS DWD DWS ADS 维度建模 "
         "Parquet ORC Avro Kafka ClickHouse Doris Impala"
     ),
+    "非技术通用": (
+        "管培生 管理培训生 校招 应届生 轮岗 职业规划 团队协作 沟通协调 "
+        "实习经历 学生会 研究生会 实验室安全 隐患排查 质量控制 质量管理 "
+        "QC QA EHS ISO9001 ISO14001 HACCP GMP SOP 理化检测 微生物检测 "
+        "样品前处理 原子荧光 ICP 原子吸收 气相色谱 液相色谱 pH 含水量 "
+        "SPSS Origin Excel 数据分析 显著性检验 标准曲线 平行样 空白对照 "
+        "国家重点研发计划 十四五 食品科学 环境工程 复盘 核心价值观"
+    ),
 }
 
 TERM_CORRECTIONS = {
@@ -276,6 +284,18 @@ def postprocess_interview_transcription(text: str) -> str:
 
 def _build_initial_prompt(position: str, language: str) -> str:
     """Short demonstration prompt for Whisper (keep ~100 chars to avoid hallucination)."""
+    try:
+        from core.config import get_config
+
+        mode = str(getattr(get_config(), "interview_mode", "tech") or "tech").strip().lower()
+    except Exception:
+        mode = "tech"
+    pos = (position or "").strip() or "目标岗位"
+    if mode == "general":
+        return (
+            f"这是一段中文面试语音，岗位是「{pos}」，可能包含专业术语、实验/质检指标、"
+            "学生工作与团队协作内容。请准确识别中文原词与公司/岗位名称。"
+        )
     return (
         "这是一段技术面试语音，可能中英混说且口音不标准。"
         "请优先识别技术术语英文原词，如 Redis、ZSET、Sorted Set、MySQL、Docker、Kubernetes、API。"
@@ -316,10 +336,27 @@ def build_tech_hotwords(
     # 自定义热词优先：超长截断从尾部丢，内置词库很长，用户的专属词
     # 若排在后面会被截掉，而它们恰恰是最需要偏置的。
     words: list[str] = []
+    interview_mode = "tech"
+    target_company = ""
+    try:
+        from core.config import get_config
+
+        cfg = get_config()
+        interview_mode = str(getattr(cfg, "interview_mode", "tech") or "tech").strip().lower()
+        target_company = str(getattr(cfg, "target_company", "") or "").strip()
+    except Exception:
+        pass
+    if target_company and interview_mode == "general":
+        words.extend(_split_hotword_text(target_company))
     if custom:
         for key in ("通用", position):
             words.extend(_split_hotword_text(str(custom.get(key, ""))))
-    for key in ("通用", language, position):
+    vocab_keys = (
+        ("非技术通用", position, "通用")
+        if interview_mode == "general"
+        else ("通用", language, position)
+    )
+    for key in vocab_keys:
         vocab = TECH_VOCAB.get(key)
         if not vocab:
             continue

@@ -78,7 +78,9 @@ export interface AppConfig {
   candidate_mic_compatibility_mode?: boolean
   position: string
   language: string
-  /** tech=技术岗（默认）；general=非技术岗（管培生/运营/销售等，行为面风格） */
+  /** 目标公司（选填，非技术岗/校招常用，用于回答公司了解与核心价值观问题） */
+  target_company?: string
+  /** tech=技术岗（默认）；general=非技术岗（管培生/运营/质检/销售等，行为面风格） */
   interview_mode?: 'tech' | 'general'
   auto_detect: boolean
   silence_threshold: number
@@ -181,6 +183,7 @@ export interface PlatformInfo {
 
 export interface OptionsInfo {
   positions: string[]
+  general_positions?: string[]
   languages: string[]
   stt_providers?: string[]
   whisper_models: string[]

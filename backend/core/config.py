@@ -166,8 +166,11 @@ class AppConfig(BaseModel):
 
     position: str = "后端开发"
     language: str = "Python"
-    # 面试岗位类型：tech=技术岗（默认，本工具主要场景）；general=非技术岗（管培生/运营/销售等）。
-    # general 时 prompt 换成行为面/动机面风格，不出技术八股和代码。
+    # 目标公司（选填，尤其适用于非技术岗/校招管培生/质检/运营等，如：伊利、中粮、华测检测、海底捞）：
+    # 填写后模型在回答「对我们公司有什么了解/为什么选我们公司/核心价值观」等问题时会自动结合该公司背景。
+    target_company: str = ""
+    # 面试岗位类型：tech=技术岗（默认，本工具主要场景）；general=非技术岗（管培生/运营/质检/销售等）。
+    # general 时 prompt 换成行为面/动机面/专业基础风格，不出技术八股和代码。
     interview_mode: str = "tech"
     resume_text: Optional[str] = None
     # 当前生效的简历对应的历史记录 id（写入 config.json；简历正文仍不入库）
@@ -458,6 +461,19 @@ def _save_config(cfg: AppConfig) -> bool:
 POSITION_OPTIONS = [
     "前端开发", "后端开发", "全栈开发", "算法工程师", "测试开发",
     "机器学习工程师", "数据开发", "DBA", "产品经理", "项目经理",
+]
+GENERAL_POSITION_OPTIONS = [
+    "管理培训生（管培生）",
+    "酒店管培生",
+    "质量管理 / 质检工程师（QC/QA）",
+    "食品研发 / 检测分析员",
+    "环境工程 / EHS工程师",
+    "实验室管理员 / 科研助理",
+    "运营专员 / 市场营销",
+    "供应链 / 采购物流管培生",
+    "人力资源 / 行政管培生",
+    "客户经理 / 销售管培生",
+    "项目专员 / 综合管理",
 ]
 LANGUAGE_OPTIONS = [
     "Python", "Java", "C++", "JavaScript", "TypeScript",

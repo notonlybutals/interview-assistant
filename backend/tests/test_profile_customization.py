@@ -115,6 +115,31 @@ def test_tech_mode_keeps_code_rules(monkeypatch):
     assert "非技术岗" not in prompt
 
 
+def test_general_interview_mode_includes_target_company_when_set(monkeypatch):
+    fake_cfg = _cfg(
+        position="质量管理 / 质检工程师（QC/QA）",
+        language="无",
+        interview_mode="general",
+        target_company="华测检测",
+    )
+    prompt = _prompt(monkeypatch, fake_cfg)
+    assert "华测检测" in prompt
+    assert "质量管理" in prompt
+    assert "核心价值观" in prompt
+
+
+def test_general_interview_mode_keeps_language_with_target_company(monkeypatch):
+    fake_cfg = _cfg(
+        position="环境工程 / EHS工程师",
+        language="英文",
+        interview_mode="general",
+        target_company="某食品集团",
+    )
+    prompt = _prompt(monkeypatch, fake_cfg)
+    assert "某食品集团" in prompt
+    assert "工作语言：英文" in prompt
+
+
 def test_relaxed_question_detection_accepts_long_statement():
     from services.stt import text_utils
 

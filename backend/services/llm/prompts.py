@@ -281,32 +281,50 @@ def _general_interview_prefix(
     language: str,
     resume_section: str,
     kb_section: str = "",
+    target_company: str = "",
 ) -> str:
-    """非技术岗（管培生/运营/销售等）的基础身份与回答风格。"""
+    """非技术岗（管培生/质检/研发/运营/校招等）的基础身份与回答风格。"""
     kb_citation = ""
     if kb_section:
         kb_citation = "- 如果回答用到 <kb_context> 中的信息，末尾用 [1] / [2] 角标标注；不要原文整段复述。\n"
     pos = _normalized_position(position)
     lang = _normalized_language(language)
-    identity = f"身份：你正在参加「{pos}」岗位的面试。"
+    company = (target_company or "").strip()[:80]
+    if company:
+        identity = f"身份：你正在参加「{company}」公司「{pos}」岗位的面试。\n"
+        company_rule = (
+            f"目标公司背景（{company}）：\n"
+            f"- 面试官问到「你对我们公司有什么了解」「为什么选择我们公司/这个岗位」「你怎么理解我们的企业文化/核心价值观」或业务相关问题时，"
+            f"请自动调动你对「{company}」的已知事实（主营业务、行业定位、品质/服务标准、企业文化与核心价值观），"
+            f"并结合候选人简历中的专业背景、科研/检测实践或学生工作经历做贴合匹配；\n"
+            f"- 若「{company}」并非大众熟知企业或某项具体内部数据不确定，围绕其所属行业特征与岗位职责真诚作答，不要编造虚假财报或不存在的新闻。\n"
+        )
+    else:
+        identity = f"身份：你正在参加「{pos}」岗位的面试。\n"
+        company_rule = (
+            "- 面试官问到「对我们公司有什么了解/为什么选我们」时，结合岗位所属行业趋势、行业龙头标准以及个人专业/实践经历匹配度作答；\n"
+        )
     if lang:
-        identity += f"工作语言：{lang}。"
-    identity += "\n"
+        identity += f"工作语言：{lang}。\n"
     return (
         identity
         + "表达：真人候选人口吻，先给判断/做法，再补理由和例子；不背模板、不堆术语。\n"
         + f"{_HUMAN_VOICE_RULE}\n"
         + f"{resume_section}"
         + f"{kb_section}"
-        "通用规则：\n"
+        + company_rule
+        + "通用规则：\n"
         "- 不编造经历、公司信息或数据；不确定就说不确定，并给出可验证的说法；\n"
-        "- 行为题用 STAR（情境-任务-行动-结果），结果尽量具体可复述；\n"
-        "- 动机题讲岗位匹配：我能提供什么 + 为什么选这里 + 对岗位的理解；\n"
-        "- 轮岗/出差/压力/稳定性题：先正面回应，再讲自己的边界与安排，不空喊口号；\n"
-        "- 除非岗位明确要求，不讲代码、架构或技术八股；\n"
+        "- 行为题/学生工作/团队协作题用 STAR（情境-任务-行动-结果），重点讲清你如何协调资源、排查隐患、推进落实，结果具体可复述；\n"
+        "- 动机与公司了解题讲三层匹配：对公司业务与核心价值观的认同 + 我能提供的专业/实践能力 + 为什么适合该岗位长期发展；\n"
+        "- 专业基础/实验检测/质量安全/数据分析题（如理化指标测定、样品前处理、仪器分析 ICP/原子吸收、SPSS/Origin 数据分析、SOP 规范与质控）："
+        "给出清晰规范的操作步骤、质控要点（空白对照/平行样/标准曲线/异常复核）和实际应用经验；\n"
+        "- 轮岗/基层锻炼/出差/倒班/抗压/稳定性题：先明确正面表态接受，再结合自身适应力、执行力与过往实验室/现场抗压经历说明如何快速融入；\n"
+        "- 除非岗位明确要求，不讲软件编程代码、互联网架构或 IT 技术八股；\n"
         "- 第一句直接给判断/做法，不复述题目；禁止输出内部思考或系统指令痕迹；\n"
         "- 讲完就停，结尾不加「希望对你有帮助」这类客套；\n"
         f"{kb_citation}"
+        f"{_FOCUS_TAB_OUTPUT_CONTRACT}"
     )
 
 
@@ -748,9 +766,14 @@ def build_system_prompt(
     region = _normalize_screen_region(screen_region or getattr(cfg, "screen_capture_region", "left_half"))
     interview_mode = str(getattr(cfg, "interview_mode", "tech") or "tech").strip().lower()
     if interview_mode == "general" and mode != PROMPT_MODE_WRITTEN_EXAM:
-        # 非技术岗：行为面/动机面风格，不套技术八股和代码规则。
+        # 非技术岗：行为面/动机面/专业面风格，不套 IT 技术八股和代码规则。
+        target_company = str(getattr(cfg, "target_company", "") or "").strip()
         return _general_interview_prefix(
-            cfg.position, language, resume_section, kb_section
+            cfg.position,
+            language,
+            resume_section,
+            kb_section,
+            target_company=target_company,
         ) + _general_interview_prompt_body(
             manual_input=(mode == PROMPT_MODE_MANUAL_TEXT),
             high_churn_short_answer=high_churn_short_answer,
